@@ -64,6 +64,37 @@ def debug_tab():
     st.subheader("Debug Info")
     st.write("Session State:", dict(st.session_state))
 
+# Add a new tab for comparison
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Logs", "Debug", "Comparison"])
+
+with tab4:
+    st.header("📈 Strategy Comparison")
+
+    # Run both strategies in parallel for the same price
+    price = engine.broker.get_price()
+    ml_plugin = StrategyPlugin("sai.strategies.ml_strategy")
+    ma_plugin = StrategyPlugin("sai.strategies.ma_crossover")
+
+    ml_signal = ml_plugin.generate_signal(price)
+    ma_signal = ma_plugin.generate_signal(price)
+
+    st.write(f"Market Price: {price:.2f}")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("ML Strategy")
+        st.write("Signal:", ml_signal)
+        st.write("Metrics:", engine.metrics.update(engine.broker.balance))
+
+    with col2:
+        st.subheader("MA Crossover")
+        st.write("Signal:", ma_signal)
+        st.write("Metrics:", engine.metrics.update(engine.broker.balance))
+
+    # Show equity curve comparison
+    st.text("Equity Curve (ASCII):")
+    st.text(engine.chart.update(engine.broker.balance))
+
 # --- Main App ---
 def main():
     init_defaults()
@@ -74,6 +105,7 @@ def main():
         "🧠 Strategy",
         "📜 Logs",
         "🛠 Debug"
+        "🇸🇸 Comparison"
     ])
 
     with tabs[0]:
