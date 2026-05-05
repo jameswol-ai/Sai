@@ -2,6 +2,11 @@ import random
 import sai
 
 from engine.core_loop import SaiCoreLoop
+from sai.core.engine import StrategyPlugin
+
+plugin = StrategyPlugin("sai.strategies.ml_strategy")
+signal = plugin.generate_signal(101.5)
+print("Generated signal:", signal)
 
 loop = SaiCoreLoop(bot, metrics, csv_exporter, sleep_time=1.0)
 
