@@ -1,5 +1,27 @@
 # sai/core/engine.py
 
+# engine.py (excerpt)
+
+import logging
+import importlib
+
+class StrategyPlugin:
+    def __init__(self, module_name, class_name="Strategy"):
+        try:
+            module = importlib.import_module(module_name)
+            self.strategy = getattr(module, class_name)()
+        except Exception as e:
+            logging.error(f"Failed to load strategy {module_name}: {e}")
+            self.strategy = None
+
+    def generate_signal(self, market_data):
+        if self.strategy:
+            try:
+                return self.strategy.generate_signal(market_data)
+            except Exception as e:
+                logging.error(f"Signal error: {e}")
+        return None
+
 from sai.core.performance import PerformanceSnapshot
 from sai.core.metrics import RollingMetrics
 from sai.core.equity_chart import EquityCurveASCII
