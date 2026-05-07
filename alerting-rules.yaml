@@ -1,0 +1,29 @@
+groups:
+- name: sai-alerts
+  rules:
+  - alert: HighDrawdown
+    expr: sai_drawdown > 0.10
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Drawdown exceeds 10%"
+      description: "Equity drawdown is above 10% threshold."
+
+  - alert: LowEquity
+    expr: sai_equity < 10000
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Equity dropped below $10,000"
+      description: "Current equity is below safe threshold."
+
+  - alert: ProjectCategoryComplete
+    expr: sai_tracker_completion == 100
+    for: 30s
+    labels:
+      severity: info
+    annotations:
+      summary: "Project category completed"
+      description: "A project tracker category has reached 100% completion."
