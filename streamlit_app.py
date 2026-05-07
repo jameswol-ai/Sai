@@ -201,7 +201,6 @@ def registry_tab():
         "Accuracy": [0.65, 0.72],
         "Sharpe": [1.1, 1.4]
     })
-
 # --- Alerts Tab ---
 def alerts_tab():
     st.subheader("Active Alerts")
@@ -212,37 +211,41 @@ def alerts_tab():
         st.warning("⚠️ Equity dropped below $10,000")
         st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "Low Equity"})
     if tracker_gauge._value.get() == 100:
+        st.success("✅ Project category completed")
+        st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "Tracker Complete"})
 
-#--- Main App ---
 
+# --- Main App ---
 def main():
-init_defaults()
-start_metrics_server(port=8000) # Prometheus scrapes here
-st.title("SAI Trading Dashboard Cockpit")
+    init_defaults()
+    start_metrics_server(port=8000)  # Prometheus scrapes here
+    st.title("SAI Trading Dashboard Cockpit")
 
-tabs = st.tabs([
-"📊 Dashboard",
-"🧠 Strategy",
-"📜 Logs",
-"🛠 Debug",
-"📈 Analytics",
-"🚨 Alerts"
- ])
+    tabs = st.tabs([
+        "📊 Dashboard",
+        "🧠 Strategy",
+        "📜 Logs",
+        "🛠 Debug",
+        "📈 Analytics",
+        "📦 Registry",
+        "🚨 Alerts"
+    ])
 
-with tabs[0]:
-dashboard_tab()
-with tabs[1]:
-strategy_tab()
-with tabs[2]:
-logs_tab()
-with tabs[3]:
-debug_tab()
-with tabs[4]:
-analytics_tab()
-with tabs[5]:
-registry_tab()
-with tabs[6]:
-alerts_tab()
+    with tabs[0]:
+        dashboard_tab()
+    with tabs[1]:
+        strategy_tab()
+    with tabs[2]:
+        logs_tab()
+    with tabs[3]:
+        debug_tab()
+    with tabs[4]:
+        analytics_tab()
+    with tabs[5]:
+        registry_tab()
+    with tabs[6]:
+        alerts_tab()
 
-if name == "main":
-main()
+
+if __name__ == "__main__":
+    main()
