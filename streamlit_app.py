@@ -5,6 +5,9 @@ import threading
 import logging
 import http.server
 import socketserver
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
 from prometheus_client import Gauge, CollectorRegistry, generate_latest
 
 # --- Logging Setup ---
@@ -31,7 +34,10 @@ def init_defaults():
         "running": False,
         "prices": [],
         "tracker_completion": 0,
-        "metrics_server_started": False
+        "metrics_server_started": False,
+        "trades": [],
+        "deploys": [],
+        "alerts": []
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -50,6 +56,14 @@ def trading_loop(refresh):
         st.session_state.balance += pnl_change
         st.session_state.prices.append(price)
         st.session_state.tracker_completion = min(100, st.session_state.tracker_completion + random.uniform(0, 2))
+
+        # Track trades for analytics
+        st.session_state.trades.append({
+            "timestamp": pd.Timestamp.now(),
+            "price": price,
+            "action": action,
+            "profit": pnl_change
+        })
 
         # Update Prometheus metrics
         equity_gauge.set(st.session_state.balance)
@@ -106,6 +120,17 @@ def dashboard_tab():
     if st.session_state.prices:
         chart.line_chart(st.session_state.prices[-50:])
 
+    # --- Advanced Visualization: Trade Outcome Heatmap ---
+    if st.session_state.trades:
+        st.subheader("📊 Trade Outcome Heatmap")
+        df_trades = pd.DataFrame(st.session_state.trades)
+        df_trades['hour'] = df_trades['timestamp'].dt.hour
+        df_trades['day'] = df_trades['timestamp'].dt.day_name()
+        pivot = df_trades.pivot_table(index='day', columns='hour', values='profit', aggfunc='mean')
+        fig, ax = plt.subplots(figsize=(12,6))
+        sns.heatmap(pivot, cmap="RdYlGn", center=0, annot=True, fmt=".2f", ax=ax)
+        st.pyplot(fig)
+
 # --- Strategy Tab ---
 def strategy_tab():
     st.subheader("Strategy Configuration")
@@ -122,6 +147,20 @@ def logs_tab():
     except FileNotFoundError:
         st.text_area("Execution Logs", "No logs yet...", height=300)
 
+    # --- Advanced Visualization: Unified Timeline Overlay ---
+    if st.session_state.trades:
+        st.subheader("🕒 Unified Event Timeline")
+        df_trades = pd.DataFrame(st.session_state.trades)
+        df_trades['event'] = "Trade"
+        df_events = df_trades[['timestamp','event']]
+        if st.session_state.deploys:
+            df_deploys = pd.DataFrame(st.session_state.deploys)
+            df_events = pd.concat([df_events, df_deploys])
+        if st.session_state.alerts:
+            df_alerts = pd.DataFrame(st.session_state.alerts)
+            df_events = pd.concat([df_events, df_alerts])
+        st.line_chart(df_events.groupby(['timestamp','event']).size().unstack(fill_value=0))
+
 # --- Debug Tab ---
 def debug_tab():
     st.subheader("Debug Info")
@@ -132,6 +171,20 @@ def analytics_tab():
     st.subheader("Analytics")
     st.metric("Sharpe Ratio", f"{sharpe_gauge._value.get():.2f}")
     st.metric("Max Drawdown", f"{drawdown_gauge._value.get():.2%}")
+
+    # --- Advanced Visualization: Correlation Matrix ---
+    if st.session_state.trades:
+        st.subheader("📈 Correlation Matrix")
+        df_trades = pd.DataFrame(st.session_state.trades)
+        df_metrics = pd.DataFrame({
+            "accuracy": [random.uniform(0.5,0.9) for _ in range(len(df_trades))],
+            "volatility": [abs(random.gauss(0,1)) for _ in range(len(df_trades))],
+            "returns": df_trades['profit']
+        })
+        corr = df_metrics.corr()
+        fig, ax = plt.subplots(figsize=(6,4))
+        sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
+        st.pyplot(fig)
 
 # --- Registry Tab ---
 def registry_tab():
@@ -147,10 +200,13 @@ def alerts_tab():
     st.subheader("Active Alerts")
     if drawdown_gauge._value.get() > 0.10:
         st.error("⚠️ High Drawdown > 10%")
+        st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "High Drawdown"})
     if equity_gauge._value.get() < 10000:
         st.warning("⚠️ Equity dropped below $10,000")
+        st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "Low Equity"})
     if tracker_gauge._value.get() == 100:
         st.success("✅ Project category completed")
+        st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "Tracker Complete"})
 
 # --- Main App ---
 def main():
@@ -164,7 +220,6 @@ def main():
         "📜 Logs",
         "🛠 Debug",
         "📈 Analytics",
-        "📂 Registry",
         "🚨 Alerts"
     ])
 
