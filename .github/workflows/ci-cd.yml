@@ -1,4 +1,4 @@
-name: SAI CI/CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
@@ -12,16 +12,20 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Run tests
-        run: pytest --maxfail=1 --disable-warnings -q
+        run: pip install -r requirements.txt pytest pyyaml
+
+      - name: Validate config
+        run: python sai/scripts/validate_config.py
+
+      - name: Run unit tests
+        run: pytest -q --disable-warnings
 
   docker-build:
     runs-on: ubuntu-latest
@@ -29,99 +33,11 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+
       - name: Build Docker image
-        run: docker build -t sai-bot:latest .
-      - name: Push to GHCR
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - run: docker tag sai-bot:latest ghcr.io/${{ github.repository }}/sai-bot:latest
-      - run: docker push ghcr.io/${{ github.repository }}/sai-bot:latest
+        run: docker build -t my-bot:latest .
 
-  helm-deploy-staging:
-    runs-on: ubuntu-latest
-    needs: docker-build
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'v1.29.0'
-      - name: Set up Helm
-        uses: azure/setup-helm@v3
-        with:
-          version: 'v3.13.0'
-      - name: Configure Kubeconfig
+      - name: Push Docker image
         run: |
-          echo "${{ secrets.KUBECONFIG_STAGING }}" > kubeconfig
-          export KUBECONFIG=kubeconfig
-      - name: Deploy to Staging
-        run: |
-          helm upgrade --install sai-bot ./sai-chart -f sai-chart/values-staging.yaml \
-            --set image.tag=${{ github.sha }}
-
-  helm-deploy-production:
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: docker-build
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'v1.29.0'
-      - name: Set up Helm
-        uses: azure/setup-helm@v3
-        with:
-          version: 'v3.13.0'
-      - name: Configure Kubeconfig
-        run: |
-          echo "${{ secrets.KUBECONFIG_PROD }}" > kubeconfig
-          export KUBECONFIG=kubeconfig
-      - name: Deploy to Production
-        run: |
-          helm upgrade --install sai-bot ./sai-chart -f sai-chart/values-production.yaml \
-            --set image.tag=${{ github.sha }}
-
-helm-rollback:
-  runs-on: ubuntu-latest
-  needs: [helm-deploy-staging, helm-deploy-production]
-  if: failure()
-  steps:
-    - name: Set up Helm
-      uses: azure/setup-helm@v3
-      with:
-        version: 'v3.13.0'
-
-    - name: Configure Kubeconfig (Production)
-      run: |
-        echo "${{ secrets.KUBECONFIG_PROD }}" > kubeconfig
-        export KUBECONFIG=kubeconfig
-
-    - name: Rollback Production Release
-      run: |
-        helm rollback sai-bot 1
-
-    - name: Notify Slack of Rollback
-      uses: slackapi/slack-github-action@v1.23.0
-      with:
-        payload: |
-          {
-            "text": ":warning: Helm rollback executed for *sai-bot* in production.\n
-            • Commit: ${{ github.sha }}\n
-            • Branch: ${{ github.ref_name }}\n
-            • Timestamp: ${{ github.event.head_commit.timestamp }}\n
-            Release reverted to revision 1 due to deployment failure."
-          }
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-    - name: Notify Telegram of Rollback
-      run: |
-        curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage \
-          -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
-          -d text="⚠️ Helm rollback executed for *sai-bot* in production.\n• Commit: ${{ github.sha }}\n• Branch: ${{ github.ref_name }}\n• Timestamp: ${{ github.event.head_commit.timestamp }}\nRelease reverted to revision 1 due to deployment failure."  
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
+          docker push my-bot:latest
