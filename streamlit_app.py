@@ -76,7 +76,7 @@ class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
 
 def start_metrics_server(port=8000):
-    if not st.session_state.metrics_server_started:
+    if not st.session_state.get("metrics_server_started", False):
         server = ReusableTCPServer(("", port), MetricsHandler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         st.session_state.metrics_server_started = True
@@ -155,6 +155,7 @@ def alerts_tab():
 # --- Main App ---
 def main():
     init_defaults()
+    start_metrics_server(port=8000)  # Prometheus scrapes here
     st.title("SAI Trading Dashboard Cockpit")
 
     tabs = st.tabs([
@@ -183,5 +184,4 @@ def main():
         alerts_tab()
 
 if __name__ == "__main__":
-    start_metrics_server(port=8000)  # Prometheus scrapes here
     main()
