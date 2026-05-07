@@ -1,0 +1,33 @@
+groups:
+  - name: sai-alerts
+    interval: 30s
+    rules:
+      # 🔴 Alert if PnL drops below -100 USD
+      - alert: SaiNegativePnL
+        expr: sai_pnl < -100
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PnL dropped below -100 USD"
+          description: "Sai trading bot is losing money. Current PnL: {{ $value }}"
+
+      # ⚠️ Alert if trade latency exceeds 2 seconds (95th percentile)
+      - alert: SaiHighLatency
+        expr: histogram_quantile(0.95, rate(sai_trade_latency_seconds_bucket[5m])) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trade latency above 2s"
+          description: "Sai trading bot latency is too high. Current latency: {{ $value }}"
+
+      # 🔴 Alert if no trades executed in 30 minutes
+      - alert: SaiNoTrades
+        expr: increase(sai_trades_total[30m]) == 0
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No trades executed in 30 minutes"
+          description: "Sai trading bot may be stuck or disconnected."
