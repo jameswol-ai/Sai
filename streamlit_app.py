@@ -35,6 +35,7 @@ def init_defaults():
         "prices": [],
         "tracker_completion": 0,
         "metrics_server_started": False,
+        "metrics_server": None,
         "trades": [],
         "deploys": [],
         "alerts": []
@@ -57,7 +58,6 @@ def trading_loop(refresh):
         st.session_state.prices.append(price)
         st.session_state.tracker_completion = min(100, st.session_state.tracker_completion + random.uniform(0, 2))
 
-        # Track trades for analytics
         st.session_state.trades.append({
             "timestamp": pd.Timestamp.now(),
             "price": price,
@@ -65,7 +65,6 @@ def trading_loop(refresh):
             "profit": pnl_change
         })
 
-        # Update Prometheus metrics
         equity_gauge.set(st.session_state.balance)
         drawdown_gauge.set(max(0, (1000 - st.session_state.balance) / 1000))
         sharpe_gauge.set(random.uniform(-1, 2))
@@ -90,11 +89,23 @@ class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
 
 def start_metrics_server(port=8000):
-    if not st.session_state.get("metrics_server_started", False):
-        server = ReusableTCPServer(("", port), MetricsHandler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        st.session_state.metrics_server_started = True
-        st.write(f"✅ Prometheus metrics server running on port {port}")
+    if not st.session_state.metrics_server_started:
+        try:
+            server = ReusableTCPServer(("", port), MetricsHandler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            st.session_state.metrics_server_started = True
+            st.session_state.metrics_server = server
+            st.write(f"✅ Prometheus metrics server running on port {port}")
+        except OSError as e:
+            st.warning(f"⚠️ Port {port} unavailable ({e}). Trying fallback port {port+1}...")
+            try:
+                server = ReusableTCPServer(("", port + 1), MetricsHandler)
+                threading.Thread(target=server.serve_forever, daemon=True).start()
+                st.session_state.metrics_server_started = True
+                st.session_state.metrics_server = server
+                st.write(f"✅ Prometheus metrics server running on port {port+1}")
+            except OSError as e2:
+                st.error(f"❌ Failed to start metrics server: {e2}")
 
 # --- Dashboard Tab ---
 def dashboard_tab():
@@ -116,11 +127,9 @@ def dashboard_tab():
     st.metric("Balance", f"{st.session_state.balance:.2f}")
     st.metric("PnL", f"{st.session_state.pnl:.2f}")
 
-    chart = st.empty()
     if st.session_state.prices:
-        chart.line_chart(st.session_state.prices[-50:])
+        st.line_chart(st.session_state.prices[-50:])
 
-    # --- Advanced Visualization: Trade Outcome Heatmap ---
     if st.session_state.trades:
         st.subheader("📊 Trade Outcome Heatmap")
         df_trades = pd.DataFrame(st.session_state.trades)
@@ -147,7 +156,6 @@ def logs_tab():
     except FileNotFoundError:
         st.text_area("Execution Logs", "No logs yet...", height=300)
 
-    # --- Advanced Visualization: Unified Timeline Overlay ---
     if st.session_state.trades:
         st.subheader("🕒 Unified Event Timeline")
         df_trades = pd.DataFrame(st.session_state.trades)
@@ -172,7 +180,6 @@ def analytics_tab():
     st.metric("Sharpe Ratio", f"{sharpe_gauge._value.get():.2f}")
     st.metric("Max Drawdown", f"{drawdown_gauge._value.get():.2%}")
 
-    # --- Advanced Visualization: Correlation Matrix ---
     if st.session_state.trades:
         st.subheader("📈 Correlation Matrix")
         df_trades = pd.DataFrame(st.session_state.trades)
@@ -205,38 +212,36 @@ def alerts_tab():
         st.warning("⚠️ Equity dropped below $10,000")
         st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "Low Equity"})
     if tracker_gauge._value.get() == 100:
-        st.success("✅ Project category completed")
-        st.session_state.alerts.append({"timestamp": pd.Timestamp.now(), "event": "Tracker Complete"})
 
-# --- Main App ---
+--- Main App ---
 def main():
-    init_defaults()
-    start_metrics_server(port=8000)  # Prometheus scrapes here
-    st.title("SAI Trading Dashboard Cockpit")
+init_defaults()
+start_metrics_server(port=8000) # Prometheus scrapes here
+st.title("SAI Trading Dashboard Cockpit")
 
-    tabs = st.tabs([
-        "📊 Dashboard",
-        "🧠 Strategy",
-        "📜 Logs",
-        "🛠 Debug",
-        "📈 Analytics",
-        "🚨 Alerts"
-    ])
+tabs = st.tabs([
+"📊 Dashboard",
+"🧠 Strategy",
+"📜 Logs",
+"🛠 Debug",
+"📈 Analytics",
+"🚨 Alerts"
+ ])
 
-    with tabs[0]:
-        dashboard_tab()
-    with tabs[1]:
-        strategy_tab()
-    with tabs[2]:
-        logs_tab()
-    with tabs[3]:
-        debug_tab()
-    with tabs[4]:
-        analytics_tab()
-    with tabs[5]:
-        registry_tab()
-    with tabs[6]:
-        alerts_tab()
+with tabs[0]:
+dashboard_tab()
+with tabs[1]:
+strategy_tab()
+with tabs[2]:
+logs_tab()
+with tabs[3]:
+debug_tab()
+with tabs[4]:
+analytics_tab()
+with tabs[5]:
+registry_tab()
+with tabs[6]:
+alerts_tab()
 
-if __name__ == "__main__":
-    main()
+if name == "main":
+main()
