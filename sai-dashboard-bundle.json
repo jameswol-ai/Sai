@@ -1,0 +1,79 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SAI Trading Bot Cockpit",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "Equity Curve",
+        "targets": [
+          { "expr": "sai_equity", "legendFormat": "Equity" },
+          { "expr": "sai_drawdown", "legendFormat": "Drawdown" }
+        ],
+        "yaxes": [
+          { "format": "currencyUSD" },
+          { "format": "percent" }
+        ]
+      },
+      {
+        "type": "gauge",
+        "title": "Exposure",
+        "targets": [
+          { "expr": "sai_exposure" }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "percent" }
+        }
+      },
+      {
+        "type": "bargauge",
+        "title": "Model Metrics",
+        "targets": [
+          { "expr": "sai_accuracy", "legendFormat": "Accuracy" },
+          { "expr": "sai_winrate", "legendFormat": "Win Rate" },
+          { "expr": "sai_sharpe", "legendFormat": "Sharpe" }
+        ]
+      },
+      {
+        "type": "table",
+        "title": "Model Registry",
+        "targets": [
+          { "expr": "sai_model_registry_info" }
+        ]
+      },
+      {
+        "type": "logs",
+        "title": "Trading & Risk Logs",
+        "datasource": "Elasticsearch",
+        "targets": [
+          { "query": "index=trading-logs OR risk-logs" }
+        ]
+      },
+      {
+        "type": "bargauge",
+        "title": "Project Tracker Progress",
+        "targets": [
+          { "expr": "sai_tracker_completion", "legendFormat": "{{category}}" }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "percent" }
+        }
+      },
+      {
+        "type": "alertlist",
+        "title": "SAI Alerts",
+        "datasource": "Prometheus",
+        "targets": [
+          { "expr": "sai_drawdown > 0.10", "legendFormat": "High Drawdown" },
+          { "expr": "sai_equity < 10000", "legendFormat": "Low Equity" },
+          { "expr": "sai_tracker_completion == 100", "legendFormat": "Category Complete" }
+        ],
+        "options": {
+          "show": "current",
+          "sortOrder": "asc"
+        }
+      }
+    ]
+  },
+  "overwrite": true
+}
