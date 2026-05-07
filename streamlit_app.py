@@ -214,6 +214,7 @@ def alerts_tab():
     if tracker_gauge._value.get() == 100:
 
 #--- Main App ---
+
 def main():
 init_defaults()
 start_metrics_server(port=8000) # Prometheus scrapes here
