@@ -133,6 +133,19 @@ def dashboard_tab():
     st.metric("Balance", f"{st.session_state.balance:.2f}")
     st.metric("PnL", f"{st.session_state.pnl:.2f}")
 
+# Simulated price chart
+chart = st.empty()
+prices = []
+if st.session_state.running:
+for _ in range(10):
+price = round(random.uniform(90, 110), 2)
+st.session_state.last_price = price
+st.session_state.last_action = random.choice(["BUY", "SELL", "HOLD"])
+st.session_state.pnl += random.uniform(-1, 1)
+prices.append(price)
+chart.line_chart(prices)
+time.sleep(refresh)
+
     if st.session_state.prices:
         st.line_chart(st.session_state.prices[-50:])
 
