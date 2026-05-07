@@ -1,0 +1,57 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Sai Live Trading Dashboard",
+    "panels": [
+      {
+        "type": "stat",
+        "title": "Total Trades Executed",
+        "targets": [
+          {
+            "expr": "sai_trades_total"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        },
+        "gridPos": { "x": 0, "y": 0, "w": 8, "h": 6 }
+      },
+      {
+        "type": "gauge",
+        "title": "Current PnL",
+        "targets": [
+          {
+            "expr": "sai_pnl"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "min": -1000,
+            "max": 1000
+          }
+        },
+        "gridPos": { "x": 8, "y": 0, "w": 8, "h": 6 }
+      },
+      {
+        "type": "graph",
+        "title": "Trade Latency Distribution",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(sai_trade_latency_seconds_bucket[5m]))"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": { "x": 0, "y": 6, "w": 16, "h": 8 }
+      }
+    ],
+    "schemaVersion": 36,
+    "version": 1
+  }
+}
