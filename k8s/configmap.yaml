@@ -10,3 +10,10 @@ data:
       "take_profit_pct": 0.02,
       "max_drawdown_pct": 0.10
     }
+  alerts.json: |
+    {
+      "SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/XXX/YYY/ZZZ",
+      "ALERT_EMAIL": "alerts@example.com",
+      "EMAIL_USER": "bot@example.com",
+      "EMAIL_PASS": "your-app-password"
+    }
