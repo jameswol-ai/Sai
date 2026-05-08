@@ -169,7 +169,22 @@ def main():
     init_defaults()
     init_risk_manager()
     init_notifier()
-    start_metrics_server(port=8000)
+    def start_metrics_server(port=8000):
+    if "metrics_server_started" in st.session_state and st.session_state.metrics_server_started:
+        return  # already running
+
+    try:
+        start_http_server(port, registry=registry)
+        st.session_state.metrics_server_started = True
+        st.write(f"✅ Prometheus metrics server running on port {port}")
+    except OSError as e:
+        st.warning(f"⚠️ Port {port} unavailable ({e}). Trying fallback port {port+1}...")
+        try:
+            start_http_server(port + 1, registry=registry)
+            st.session_state.metrics_server_started = True
+            st.write(f"✅ Prometheus metrics server running on port {port+1}")
+        except OSError as e2:
+            st.error(f"❌ Failed to start metrics server: {e2}")
 
     st.title("SAI Trading Dashboard Cockpit")
     tabs = st.tabs([
