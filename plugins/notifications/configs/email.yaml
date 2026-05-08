@@ -16,3 +16,16 @@ to_addr: "RECIPIENT_EMAIL_ADDRESS"
 # Logging
 log_level: "INFO"
 log_file: "logs/email_notifier.log"
+
+smtp_server: "smtp.gmail.com"
+smtp_port: 587
+use_tls: true
+
+username: "YOUR_EMAIL_ADDRESS"
+password: "YOUR_EMAIL_PASSWORD"
+
+from_addr: "YOUR_EMAIL_ADDRESS"
+to_addr: "RECIPIENT_EMAIL_ADDRESS"
+
+log_level: "INFO"
+log_file: "logs/email_notifier.log"
