@@ -169,7 +169,8 @@ def main():
     init_defaults()
     init_risk_manager()
     init_notifier()
-    def start_metrics_server(port=8000):
+    
+def start_metrics_server(port=8000):
     if "metrics_server_started" in st.session_state and st.session_state.metrics_server_started:
         return  # already running
 
