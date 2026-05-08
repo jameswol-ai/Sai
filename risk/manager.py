@@ -33,3 +33,10 @@ class RiskManager:
             return False
 
         return True
+
+class RiskManager:
+    def __init__(self, plugins):
+        self.plugins = plugins
+
+    def check_trade(self, trade, balance):
+        return all(plugin.check(trade, balance) for plugin in self.plugins)
