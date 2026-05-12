@@ -4,8 +4,6 @@ import time
 import random
 import logging
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 from prometheus_client import Gauge, CollectorRegistry, start_http_server
 
 # --- Logging Setup ---
@@ -24,7 +22,7 @@ tracker_gauge = Gauge("sai_tracker_completion", "Project tracker completion", re
 
 def start_metrics_server(port=8000):
     if st.session_state.get("metrics_server_started", False):
-        return  # already running
+        return
     try:
         start_http_server(port, registry=registry)
         st.session_state.metrics_server_started = True
@@ -162,11 +160,11 @@ def analytics_tab():
 
 def registry_tab():
     st.subheader("Model Registry")
-    st.table({
+    st.table(pd.DataFrame({
         "Model": ["Default", "Experimental"],
         "Accuracy": [0.65, 0.72],
         "Sharpe": [1.1, 1.4]
-    })
+    }))
 
 def alerts_tab():
     st.subheader("Active Alerts")
@@ -186,11 +184,6 @@ def helm_tab():
     helm repo add sai-monitoring https://yourdomain.com/charts
     helm install sai-monitoring sai-monitoring/sai-chart -f values-production.yaml
     ```
-
-    - **Chart.yaml** → metadata for the chart
-    - **values.yaml** → default values
-    - **values-production.yaml** → production overrides
-    - **templates/** → Kubernetes manifests (deployment, service, ingress, secret)
 
     Once deployed, access monitoring at:
     - Prometheus → `/prometheus`
