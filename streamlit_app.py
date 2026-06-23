@@ -265,3 +265,15 @@ with tab_logs:
                 st.write("No rows yet.")
     else:
         st.write("No logs yet.")
+
+# Debug
+with tab_debug:
+    st.subheader("Debug Info")
+    st.json({
+        "loop_running": bool(st.session_state.loop.running) if st.session_state.loop else False,
+        "last_price": st.session_state.metrics.prices[-1] if st.session_state.metrics.prices else None,
+        "last_action": st.session_state.metrics.actions[-1] if st.session_state.metrics.actions else None,
+        "balance": st.session_state.metrics.balance,
+        "pnl": st.session_state.metrics.pnl,
+        "total_prices": len(st.session_state.metrics.prices),
+    })
