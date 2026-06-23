@@ -242,20 +242,4 @@ with tab_logs:
     if os.path.exists(st.session_state.csv.filename):
         with open(st.session_state.csv.filename, "rb") as f:
             data = f.read()
-            st.download_button(
-                label="Download trades.csv",
-                data=data,
-                file_name="trades.csv",
-                mime="text/csv"
-            )
-
-        with open(st.session_state.csv.filename, "r", newline="") as f:
-            rows = list(csv.reader(f))
-            header, body = (rows[0], rows[1:]) if len(rows) > 1 else ([], [])
-            preview = [header] + body[-20:] if header else []
-            if preview:
-                st.table(preview)
-            else:
-                st.write("No rows yet.")
-    else:
-        st.write("No logs yet.")
+            st.download_button("
