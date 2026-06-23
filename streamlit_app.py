@@ -59,6 +59,7 @@ class Metrics:
         self._lock = threading.Lock()
         self.prices, self.actions, self.trades = [], [], []
         self.balance, self.pnl = 1000, 0
+        self.balance_local, self.pnl_local = 1000, 0  # ✅ initialized
 
     def update(self, price, action, trade, bot, fx_rates):
         with self._lock:
@@ -76,10 +77,10 @@ class Metrics:
                 "last_price": self.prices[-1] if self.prices else None,
                 "last_action": self.actions[-1] if self.actions else None,
                 "balance_usd": self.balance,
-                "balance_local": bot.convert_balance(st.session_state.fx_rates),
+                "balance_local": getattr(self, "balance_local", bot.convert_balance(st.session_state.fx_rates)),
                 "currency": bot.currency,
                 "pnl_usd": self.pnl,
-                "pnl_local": self.pnl_local,
+                "pnl_local": getattr(self, "pnl_local", 0),  # ✅ safe fallback
                 "prices": list(self.prices),
             }
 
@@ -222,3 +223,23 @@ with tab_dashboard:
     st.subheader("Live Metrics")
     st.metric("Last Price", snap["last_price"])
     st.metric("Last Action", snap["last_action"])
+    st.metric("Balance (USD)", snap["balance_usd"])
+    st.metric(f"Balance ({snap['currency']})", f"{CURRENCIES[snap['currency']]['symbol']} {snap['balance_local']}")
+    st.metric("PnL (USD)", snap["pnl_usd"])
+    st.metric(f"PnL ({snap['currency']})", f"{CURRENCIES[snap['currency']]['symbol']} {snap['pnl_local']}")
+
+    st.subheader("Price Chart")
+    st.line_chart(snap["prices"])
+
+# Strategy
+with tab_strategy:
+    st.subheader("Strategy Configuration (Placeholder)")
+    st.text_area("Strategy Notes", placeholder="Describe or configure your strategy here...")
+
+# Logs
+with tab_logs:
+    st.subheader("CSV Log Preview")
+    if os.path.exists(st.session_state.csv.filename):
+        with open(st.session_state.csv.filename, "rb") as f:
+            data = f.read()
+            st.download_button("
