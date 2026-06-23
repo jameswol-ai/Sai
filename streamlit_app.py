@@ -7,7 +7,7 @@ import atexit
 
 # --- Prometheus Metrics ---
 from prometheus_client import Gauge, Counter, make_wsgi_app, CollectorRegistry
-from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
+from wsgiref.simple_server import WSGIServer, WSGIRequestHandler
 
 # Configure logging
 logging.basicConfig(filename="trading.log", level=logging.INFO, force=True)
@@ -42,8 +42,7 @@ class ReusableWSGIServer(WSGIServer):
 
 def start_metrics_server(port=8000):
     if "metrics_server" not in st.session_state:
-        app = make_wsgi_app(st.session_state["prom_registry"])
-        httpd = make_server("", port, app, server_class=ReusableWSGIServer, handler_class=WSGIRequestHandler)
+        httpd.set_app(app)
 
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
@@ -113,7 +112,7 @@ def render_dashboard():
 # --- Main ---
 def main():
     st.sidebar.title("SAI Cockpit")
-    tab = st.sidebar.radio("Navigation", ["Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug", "Plugins"])
+        #["Navigation","Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug", "Plugins"]
 
     if tab == "Dashboard":
         render_dashboard()
@@ -121,18 +120,9 @@ def main():
         st.title("Strategy Configuration")
     elif tab == "Logs":
         st.title("Logs")
-        try:
-            with open("trading.log") as f:
-                st.text(f.read())
-        except FileNotFoundError:
-            st.info("No logs yet.")
     elif tab == "Model Testing":
         st.title("Model Testing")
     elif tab == "Debug":
         st.title("Debug Tools")
     elif tab == "Plugins":
         st.title("Plugin Control Center")
-
-if __name__ == "__main__":
-    start_metrics_server()
-    main()
