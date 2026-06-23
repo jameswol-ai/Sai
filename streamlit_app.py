@@ -1,13 +1,28 @@
-# streamlit_app.py (fixed with custom registry)
+# streamlit_app.py (final patched version)
 import streamlit as st
 import threading
 import time
 import pandas as pd
 import logging
 import random
-from prometheus_client import Gauge, start_http_server, CollectorRegistry
+from prometheus_client import Gauge, CollectorRegistry, make_wsgi_app
+from wsgiref.simple_server import WSGIServer, WSGIRequestHandler
+import threading
 
-# --- Prometheus registry (isolated) ---
+# --- Safe Prometheus metrics server ---
+class ReusableWSGIServer(WSGIServer):
+    allow_reuse_address = True
+
+def start_metrics_server(port=8000, registry=None):
+    if "metrics_server_started" not in st.session_state:
+        app = make_wsgi_app(registry=registry)
+        httpd = ReusableWSGIServer(("", port), WSGIRequestHandler)
+        httpd.set_app(app)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        st.session_state["metrics_server_started"] = True
+
+# --- Prometheus registry ---
 if "prom_registry" not in st.session_state:
     st.session_state.prom_registry = CollectorRegistry()
     st.session_state.live_return = Gauge("sai_live_return", "Live trading total return", registry=st.session_state.prom_registry)
@@ -15,7 +30,7 @@ if "prom_registry" not in st.session_state:
     st.session_state.backtest_return = Gauge("sai_backtest_return", "Backtest total return", registry=st.session_state.prom_registry)
     st.session_state.backtest_drawdown = Gauge("sai_backtest_drawdown", "Backtest max drawdown", registry=st.session_state.prom_registry)
 
-# Aliases for convenience
+# Aliases
 live_return = st.session_state.live_return
 live_drawdown = st.session_state.live_drawdown
 backtest_return = st.session_state.backtest_return
@@ -163,9 +178,7 @@ def main():
     with tabs[5]: backtest_tab()
 
 if __name__ == "__main__":
-    if "metrics_server_started" not in st.session_state:
-        start_http_server(8000, registry=st.session_state.prom_registry)
-        st.session_state["metrics_server_started"] = True
+    start_metrics_server(port=8000, registry=st.session_state.prom_registry)
     if "trading_active" not in st.session_state:
         st.session_state.trading_active = False
     main()
