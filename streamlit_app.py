@@ -3,8 +3,6 @@ import threading
 import logging
 import time
 import pandas as pd
-from plugins import risk_plugins, strategy_plugins
-from notifier_plugins import notifier_plugins
 
 # --- Prometheus Metrics ---
 from prometheus_client import Gauge, Counter, make_wsgi_app
