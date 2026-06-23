@@ -1,0 +1,9 @@
+class TradingBot:
+    def __init__(self, currency="USD"):
+        self.currency = currency
+        self.position = 0
+        self.balance = 1000
+
+    def convert_balance(self):
+        rate = CURRENCIES[self.currency]["rate"]
+        return round(self.balance * rate, 2)
