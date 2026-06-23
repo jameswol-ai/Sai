@@ -8,7 +8,10 @@ import pandas as pd
 from prometheus_client import Gauge, Counter, make_wsgi_app, CollectorRegistry
 from wsgiref.simple_server import WSGIServer, WSGIRequestHandler
 
-# Create a single registry and metrics once
+# Configure logging (force avoids duplicate handlers on rerun)
+logging.basicConfig(filename="trading.log", level=logging.INFO, force=True)
+
+# --- Registry & Metrics Guard ---
 if "prom_registry" not in st.session_state:
     st.session_state["prom_registry"] = CollectorRegistry()
 
@@ -43,6 +46,7 @@ trade_counter = st.session_state["trade_counter"]
 timestamps, pnl_history, trade_freq_history = [], [], []
 MAX_HISTORY = 100
 
+# --- Metrics Server Guard ---
 class ReusableWSGIServer(WSGIServer):
     allow_reuse_address = True
 
@@ -58,9 +62,7 @@ def start_metrics_server(port=8000):
     else:
         st.sidebar.info(f"Prometheus metrics server already running on port {port}")
 
-# Configure logging
-logging.basicConfig(filename="trading.log", level=logging.INFO, force=True)
-
+# --- Alerts ---
 def trigger_alert(message, level="error"):
     if level == "error":
         st.error(message)
@@ -69,17 +71,18 @@ def trigger_alert(message, level="error"):
     else:
         st.info(message)
 
-    # Notify via plugins
-    from notifier_plugins import notifier_plugins
-    for notifier in notifier_plugins:
-        if getattr(notifier, "active", False):
-            try:
+    # Notify via plugins (optional)
+    try:
+        from notifier_plugins import notifier_plugins
+        for notifier in notifier_plugins:
+            if getattr(notifier, "active", False):
                 notifier.send(message)
-            except Exception as e:
-                logging.error(f"Notifier failed: {getattr(notifier, 'name', 'Unknown')} - {e}")
+    except ImportError:
+        pass
 
     logging.warning(f"ALERT: {message}")
 
+# --- Dashboard ---
 def render_dashboard():
     st.title("SAI Trading Dashboard")
 
@@ -117,6 +120,7 @@ def render_dashboard():
         st.line_chart(df.set_index("Timestamp")[["PnL"]])
         st.line_chart(df.set_index("Timestamp")[["Trades/min"]])
 
+# --- Main ---
 def main():
     st.sidebar.title("SAI Cockpit")
     tab = st.sidebar.radio(
