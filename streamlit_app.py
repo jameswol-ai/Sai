@@ -112,7 +112,7 @@ def render_dashboard():
 # --- Main ---
 def main():
     st.sidebar.title("SAI Cockpit")
-        ["Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug", "Plugins"]
+        #["Navigation","Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug", "Plugins"]
 
     if tab == "Dashboard":
         render_dashboard()
