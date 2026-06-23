@@ -12,11 +12,11 @@ from datetime import datetime
 # ---------------------------------------------------------
 CURRENCIES = {
     "USD": {"symbol": "$"},
-    "SSP": {"symbol": "£"},     # South Sudanese Pound
-    "UGX": {"symbol": "USh"},   # Ugandan Shilling
-    "KES": {"symbol": "KSh"},   # Kenyan Shilling
-    "TZS": {"symbol": "TSh"},   # Tanzanian Shilling
-    "RWF": {"symbol": "FRw"},   # Rwandan Franc
+    "SSP": {"symbol": "£"},
+    "UGX": {"symbol": "USh"},
+    "KES": {"symbol": "KSh"},
+    "TZS": {"symbol": "TSh"},
+    "RWF": {"symbol": "FRw"},
 }
 
 def get_fx_rate(base="USD", target="SSP"):
@@ -64,7 +64,7 @@ class Metrics:
         self._lock = threading.Lock()
         self.prices, self.actions, self.trades = [], [], []
         self.balance, self.pnl = 1000, 0
-        self.balance_local, self.pnl_local = 1000, 0  # initialized
+        self.balance_local, self.pnl_local = 1000, 0
 
     def update(self, price, action, trade, bot, fx_rates):
         with self._lock:
@@ -250,4 +250,9 @@ with tab_logs:
             st.download_button(
                 label="Download trades.csv",
                 data=data,
-                file_name="tr
+                file_name="trades.csv",
+                mime="text/csv"
+            )
+
+        with open(st.session_state.csv.filename, "r", newline="") as f:
+            rows = list(csv
