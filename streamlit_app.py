@@ -7,14 +7,6 @@ logging.basicConfig(filename="logs/app.log", level=logging.INFO)
 
 tabs = st.tabs(["Dashboard", "Strategy Config", "Logs", "Forecast", "Debug"])
 
-# Dashboard
-with tabs[0]:
-    st.header("Live FX Dashboard")
-    df = pd.DataFrame(rates["rates"].items(), columns=["Currency", "Rate"])
-    st.write("Base:", rates["base"], "Timestamp:", rates["timestamp"])
-    st.dataframe(df)
-    st.bar_chart(df.set_index("Currency"))
-
 # Strategy Config
 with tabs[1]:
     st.header("Strategy Config")
