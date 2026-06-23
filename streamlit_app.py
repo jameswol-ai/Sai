@@ -259,3 +259,7 @@ currency_choice = st.selectbox(
     index=0
 )
 st.session_state.bot.currency = currency_choice
+
+st.metric("Balance (USD)", snap["balance_usd"])
+st.metric(f"Balance ({snap['currency']})", f"{CURRENCIES[snap['currency']]['symbol']} {snap['balance_local']}")
+
