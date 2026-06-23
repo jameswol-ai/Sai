@@ -42,7 +42,6 @@ class ReusableWSGIServer(WSGIServer):
 
 def start_metrics_server(port=8000):
     if "metrics_server" not in st.session_state:
-        app = make_wsgi_app(registry=st.session_state["prom_registry"]
         httpd.set_app(app)
 
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
