@@ -252,9 +252,6 @@ with tab_logs:
                 data=data,
                 file_name="trades.csv",
                 mime="text/csv"
-            (
+            )
 
-        with open(st.session_state.csv.filename, "r", newline="") as f:
-            rows = list(csv
-
-                       )
+        with open(st.session_state.csv.filename, "r", newline="")
