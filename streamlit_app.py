@@ -159,9 +159,20 @@ def main():
         "Navigation",
         ["Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug", "Plugins"]
     )
+# --- Prometheus Metrics Server Guard ---
+class ReusableWSGIServer(WSGIServer):
+    allow_reuse_address = True
 
-    # Start Prometheus metrics server once
-    start_metrics_server(port=8000)
+def start_metrics_server(port=8000, registry=None):
+    if "metrics_server" not in st.session_state:
+        app = make_wsgi_app(registry=registry)
+        httpd = ReusableWSGIServer(("", port), WSGIRequestHandler)
+        httpd.set_app(app)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        st.session_state["metrics_server"] = httpd
+        st.sidebar.success(f"✅ Prometheus metrics server running on port {port}")
+
 
     if tab == "Dashboard":
         render_dashboard()
@@ -178,3 +189,26 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def main():
+    st.sidebar.title("SAI Cockpit")
+    tab = st.sidebar.radio(
+        "Navigation",
+        ["Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug", "Plugins"]
+    )
+
+    # Start Prometheus metrics server once
+    start_metrics_server(port=8000)
+
+    if tab == "Dashboard":
+        render_dashboard()
+    elif tab == "Strategy Config":
+        render_strategy_config()
+    elif tab == "Logs":
+        render_logs()
+    elif tab == "Model Testing":
+        render_model_testing()
+    elif tab == "Debug":
+        render_debug()
+    elif tab == "Plugins":
+        render_plugins_tab()
