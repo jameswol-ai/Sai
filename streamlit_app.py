@@ -7,6 +7,32 @@ import random
 import requests
 from datetime import datetime
 
+#(Backtest tab)
+
+def backtest_tab():
+    st.header("Backtest Engine")
+
+    # Strategy selection
+    strategy = st.selectbox("Select Strategy", ["Mean Reversion", "Momentum", "Custom"])
+
+    # Date range input
+    start_date = st.date_input("Start Date")
+    end_date = st.date_input("End Date")
+
+    # Run backtest
+    if st.button("Run Backtest"):
+        results = run_backtest(strategy, start_date, end_date)
+        st.success("Backtest completed!")
+
+        # Show metrics
+        st.metric("Total Return", f"{results['total_return']:.2%}")
+        st.metric("Max Drawdown", f"{results['max_drawdown']:.2%}")
+        st.metric("Sharpe Ratio", f"{results['sharpe_ratio']:.2f}")
+
+        # Plot equity curve
+        st.line_chart(pd.DataFrame(results["equity_curve"], columns=["Equity"]))
+
+
 # ---------------------------------------------------------
 # Currency Map (East Africa + USD)
 # ---------------------------------------------------------
