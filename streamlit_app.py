@@ -2,8 +2,8 @@
 import streamlit as st
 import pandas as pd
 import logging
-import plugins.exchange.east_africa
-import plugins.prediction.fx_arima, fx_lstm
+import east_africa.py
+import qfx_arim.py, fx_lstm.py
 
 logging.basicConfig(filename="logs/app.log", level=logging.INFO)
 
