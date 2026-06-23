@@ -10,7 +10,6 @@ tabs = st.tabs(["Dashboard", "Strategy Config", "Logs", "Forecast", "Debug"])
 # Dashboard
 with tabs[0]:
     st.header("Live FX Dashboard")
-    rates = east_africa.get_rates()
     df = pd.DataFrame(rates["rates"].items(), columns=["Currency", "Rate"])
     st.write("Base:", rates["base"], "Timestamp:", rates["timestamp"])
     st.dataframe(df)
