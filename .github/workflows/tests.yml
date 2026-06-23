@@ -33,3 +33,44 @@ jobs:
         with:
           name: pytest-results
           path: .pytest_cache
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest requests
+
+      - name: Run risk plugin tests
+        run: pytest tests/test_risk_plugins.py --maxfail=1 --disable-warnings -q
+
+      - name: Notify Slack on failure
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"Risk plugin tests failed on $GITHUB_REF"}' \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Email on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.sendgrid.net
+          server_port: 587
+          username: apikey
+          password: ${{ secrets.SENDGRID_API_KEY }}
+          subject: "SAI Risk Plugin Tests Failed"
+          to: your-team@example.com
+          from: sai-bot@example.com
+          body: "Risk plugin tests failed on $GITHUB_REF. Check artifacts for details."
