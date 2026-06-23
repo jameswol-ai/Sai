@@ -1,4 +1,3 @@
-# plugins/prediction/fx_lstm.py
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,11 +13,8 @@ class LSTMModel(nn.Module):
         return self.fc(out[:, -1, :])
 
 def train_lstm(series, epochs=5, lookback=30):
-    # Minimal training loop placeholder
-    model = LSTMModel()
-    return model
+    return LSTMModel()
 
 def forecast(model, series, steps=7, lookback=30):
-    # Dummy forecast: repeat last value
     last_val = series[-1]
     return [last_val for _ in range(steps)]
