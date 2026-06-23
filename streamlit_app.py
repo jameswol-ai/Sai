@@ -240,11 +240,11 @@ with tab_dashboard:
 with tab_strategy:
     st.subheader("Strategy Configuration (Placeholder)")
     st.text_area("Strategy Notes", placeholder="Describe or configure your strategy here...")
-
 # Logs
 with tab_logs:
     st.subheader("CSV Log Preview")
     if os.path.exists(st.session_state.csv.filename):
+        # Download button
         with open(st.session_state.csv.filename, "rb") as f:
             data = f.read()
             st.download_button(
@@ -254,4 +254,14 @@ with tab_logs:
                 mime="text/csv"
             )
 
-        with open(st.session_state.csv.filename, "r", newline="")
+        # Preview table
+        with open(st.session_state.csv.filename, "r", newline="") as f:
+            rows = list(csv.reader(f))
+            header, body = (rows[0], rows[1:]) if len(rows) > 1 else ([], [])
+            preview = [header] + body[-20:] if header else []
+            if preview:
+                st.table(preview)
+            else:
+                st.write("No rows yet.")
+    else:
+        st.write("No logs yet.")
