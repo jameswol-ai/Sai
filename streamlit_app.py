@@ -3,12 +3,13 @@ import threading
 import logging
 import time
 import pandas as pd
+import atexit
 
 # --- Prometheus Metrics ---
 from prometheus_client import Gauge, Counter, make_wsgi_app, CollectorRegistry
 from wsgiref.simple_server import WSGIServer, WSGIRequestHandler
 
-# Configure logging (force avoids duplicate handlers on rerun)
+# Configure logging
 logging.basicConfig(filename="trading.log", level=logging.INFO, force=True)
 
 # --- Registry & Metrics Guard ---
@@ -34,7 +35,7 @@ if "prom_registry" not in st.session_state:
         "sai_trade_count", "Total trades executed", registry=st.session_state["prom_registry"]
     )
 
-# Aliases for convenience
+# Aliases
 pnl_total = st.session_state["pnl_total"]
 trades_per_minute = st.session_state["trades_per_minute"]
 trade_latency = st.session_state["trade_latency"]
@@ -59,6 +60,15 @@ def start_metrics_server(port=8000):
         thread.start()
         st.session_state["metrics_server"] = httpd
         st.sidebar.success(f"✅ Prometheus metrics server running on port {port}")
+
+        # Shutdown hook
+        def shutdown_server():
+            try:
+                httpd.shutdown()
+                httpd.server_close()
+            except Exception:
+                pass
+        atexit.register(shutdown_server)
     else:
         st.sidebar.info(f"Prometheus metrics server already running on port {port}")
 
@@ -70,15 +80,6 @@ def trigger_alert(message, level="error"):
         st.warning(message)
     else:
         st.info(message)
-
-    # Notify via plugins (optional)
-    try:
-        from notifier_plugins import notifier_plugins
-        for notifier in notifier_plugins:
-            if getattr(notifier, "active", False):
-                notifier.send(message)
-    except ImportError:
-        pass
 
     logging.warning(f"ALERT: {message}")
 
