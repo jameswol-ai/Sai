@@ -26,8 +26,7 @@ def get_or_create_gauge(name, description):
 if "metrics_initialized" not in st.session_state:
     st.session_state.trade_count = get_or_create_gauge("sai_trade_count", "Number of trades executed")
     st.session_state.profit_metric = get_or_create_gauge("sai_profit", "Cumulative profit")
-    # Start server only once
-    start_http_server(8000)
+    start_http_server(8000)  # start only once
     st.session_state.metrics_initialized = True
 
 # ---------------------------
@@ -45,7 +44,11 @@ if "profit" not in st.session_state:
 # ---------------------------
 def trading_loop():
     while st.session_state.running:
-        trade = {"time": time.strftime("%H:%M:%S"), "price": 100 + len(st.session_state.trades), "profit": 1.0}
+        trade = {
+            "time": time.strftime("%H:%M:%S"),
+            "price": 100 + len(st.session_state.trades),
+            "profit": 1.0
+        }
         st.session_state.trades.append(trade)
         st.session_state.profit += trade["profit"]
 
@@ -73,6 +76,14 @@ with tabs[0]:
 
     st.metric("Total Trades", len(st.session_state.trades))
     st.metric("Cumulative Profit", f"${st.session_state.profit:.2f}")
+
+    # Risk Alerts
+    if st.session_state.profit < 0:
+        st.error("⚠️ ALERT: Profit is negative! Review strategy immediately.")
+    elif st.session_state.profit < 5:
+        st.warning("⚠️ Profit is low — consider adjusting risk parameters.")
+    else:
+        st.success("✅ Profit levels are healthy.")
 
     if st.session_state.trades:
         df = pd.DataFrame(st.session_state.trades)
