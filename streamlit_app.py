@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import plotly.express as px
 
 # Example synthetic trade data
 np.random.seed(42)
@@ -40,14 +41,22 @@ with tab2:
 
 with tab3:
     st.subheader("Unified Timeline Overlay")
-    fig = px.line(trades, x="timestamp", y=["pnl", "volatility", "model_accuracy"],
-                  labels={"value": "Metric Value", "timestamp": "Time"},
-                  title="Trades, Volatility & Model Accuracy Over Time")
+    fig = px.line(
+        trades,
+        x="timestamp",
+        y=["pnl", "volatility", "model_accuracy"],
+        labels={"value": "Metric Value", "timestamp": "Time"},
+        title="Trades, Volatility & Model Accuracy Over Time"
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 with tab4:
     st.subheader("PnL & Trade Size Trends")
-    fig = px.line(trades, x="timestamp", y=["pnl", "trade_size"],
-                  labels={"value": "Metric Value", "timestamp": "Time"},
-                  title="PnL & Trade Size Over Time")
+    fig = px.line(
+        trades,
+        x="timestamp",
+        y=["pnl", "trade_size"],
+        labels={"value": "Metric Value", "timestamp": "Time"},
+        title="PnL & Trade Size Over Time"
+    )
     st.plotly_chart(fig, use_container_width=True)
