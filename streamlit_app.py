@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import random
 import pickle
+from datetime import datetime
 
 # --- Safe stubs (replace with real implementations later) ---
 def run_bot():
@@ -34,6 +35,8 @@ if "logs" not in st.session_state:
     st.session_state.logs = []
 if "rates" not in st.session_state:
     st.session_state.rates = {}
+if "history" not in st.session_state:
+    st.session_state.history = pd.DataFrame(columns=["Time", "Currency", "Rate", "Forecast"])
 
 # Helper: threaded bot runner
 def start_bot():
@@ -60,7 +63,7 @@ def stop_bot():
 
 # --- Currency & Forecast Helpers ---
 def fetch_currency_data():
-    currencies = ["USD", "EUR", "GBP", "JPY", "UGX"]
+    currencies = ["USD", "EUR", "GBP", "JPY", "UGX", "KES", "TZS", "RWF", "SSP"]
     rates = {cur: round(random.uniform(0.5, 1500), 2) for cur in currencies}
     st.session_state.rates = rates
     return rates
@@ -68,6 +71,14 @@ def fetch_currency_data():
 def forecast_rates(rates):
     forecast = {cur: round(val * (1 + random.uniform(-0.05, 0.05)), 2) for cur, val in rates.items()}
     return forecast
+
+def update_history(rates, forecast):
+    now = datetime.now().strftime("%H:%M:%S")
+    for cur in rates.keys():
+        st.session_state.history = pd.concat([
+            st.session_state.history,
+            pd.DataFrame([{"Time": now, "Currency": cur, "Rate": rates[cur], "Forecast": forecast[cur]}])
+        ], ignore_index=True)
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="SAI Trading Bot", layout="wide")
@@ -95,6 +106,8 @@ with tabs[0]:
         forecast = forecast_rates(rates)
         st.table(pd.DataFrame(forecast.items(), columns=["Currency", "Forecast"]))
 
+        update_history(rates, forecast)
+
         # Graph visualization
         fig, ax = plt.subplots()
         ax.bar(rates.keys(), rates.values(), alpha=0.6, label="Current")
@@ -103,6 +116,19 @@ with tabs[0]:
         ax.set_title("Currency Rates vs Forecast")
         ax.legend()
         st.pyplot(fig)
+
+        # Daily trend graph
+        if not st.session_state.history.empty:
+            fig2, ax2 = plt.subplots()
+            for cur in rates.keys():
+                df_cur = st.session_state.history[st.session_state.history["Currency"] == cur]
+                ax2.plot(df_cur["Time"], df_cur["Rate"], label=f"{cur} Rate")
+                ax2.plot(df_cur["Time"], df_cur["Forecast"], linestyle="--", label=f"{cur} Forecast")
+            ax2.set_title("Daily Currency Trends")
+            ax2.set_xlabel("Time")
+            ax2.set_ylabel("Value")
+            ax2.legend()
+            st.pyplot(fig2)
 
     st.write("Trade Logs (latest 10)")
     st.table(st.session_state.logs[-10:])
