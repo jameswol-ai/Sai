@@ -4,7 +4,7 @@ import logging
 import time
 from collections import deque
 
-# Import plugin registries (must exist in your repo)
+# Import plugin registries
 from plugins import risk_plugins, notifier_plugins, strategy_plugins
 
 # Configure logging
@@ -78,7 +78,7 @@ def render_plugins_tab():
 
     # Strategy Switcher
     st.header("Strategy")
-    strategy_choice = st.selectbox("Select Strategy", [s.name for s in strategy_plugins], key="strategy_choice")
+    strategy_choice = st.selectbox("Select Strategy", list(strategy_plugins.keys()), key="strategy_choice")
     try:
         strategy_plugins[strategy_choice].activate()
         logging.info(f"Strategy switched to {strategy_choice}")
