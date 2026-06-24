@@ -20,11 +20,14 @@ tabs = st.tabs([
 # Dashboard
 with tabs[0]:
     st.header("Eastern Africa FX Dashboard")
-    rates = east_africa.get_rates()
-    df = pd.DataFrame(rates["rates"].items(), columns=["Currency", "Rate"])
-    st.write("Base:", rates["base"], "Timestamp:", rates["timestamp"])
-    st.dataframe(df)
-    st.bar_chart(df.set_index("Currency"))
+    try:
+        rates = east_africa.get_rates()
+        df = pd.DataFrame(rates["rates"].items(), columns=["Currency", "Rate"])
+        st.write("Base:", rates["base"], "Timestamp:", rates["timestamp"])
+        st.dataframe(df)
+        st.bar_chart(df.set_index("Currency"))
+    except Exception as e:
+        st.error(f"Error fetching rates: {e}")
 
 # Strategy Config
 with tabs[1]:
@@ -50,21 +53,26 @@ with tabs[3]:
     currency = st.selectbox("Select Currency", east_africa.CURRENCIES)
     horizon = st.slider("Forecast Horizon (days)", 7, 30, 7)
 
-    # Historical series
-    history = east_africa.get_daily_history(currency)
+    history = east_africa.get_daily_history(currency, days=60)
     if history:
         df_hist = pd.DataFrame(history, columns=["Date", "Rate"])
         df_hist["Date"] = pd.to_datetime(df_hist["Date"])
         series = df_hist["Rate"]
 
         # ARIMA forecast
-        arima_preds = fx_arima.forecast(series, steps=horizon)
-        st.line_chart(pd.Series(arima_preds, name="ARIMA Forecast"))
+        try:
+            arima_preds = fx_arima.forecast(series, steps=horizon)
+            st.line_chart(pd.Series(arima_preds, name="ARIMA Forecast"))
+        except Exception as e:
+            st.error(f"ARIMA error: {e}")
 
         # LSTM forecast
-        lstm_model = fx_lstm.train_lstm(series.values, epochs=5)
-        lstm_preds = fx_lstm.forecast(lstm_model, series.values, steps=horizon)
-        st.line_chart(pd.Series(lstm_preds, name="LSTM Forecast"))
+        try:
+            lstm_model = fx_lstm.train_lstm(series.values, epochs=5)
+            lstm_preds = fx_lstm.forecast(lstm_model, series.values, steps=horizon)
+            st.line_chart(pd.Series(lstm_preds, name="LSTM Forecast"))
+        except Exception as e:
+            st.error(f"LSTM error: {e}")
     else:
         st.warning("No historical data available for forecasting.")
 
