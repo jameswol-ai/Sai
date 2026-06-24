@@ -1,123 +1,87 @@
+# streamlit_app.py
 import streamlit as st
-import threading
-import time
-import logging
 import pandas as pd
-from prometheus_client import Gauge, start_http_server, REGISTRY
+import logging
+from datetime import datetime
 
-# ---------------------------
-# Logging Setup
-# ---------------------------
-logging.basicConfig(
-    filename="sai_trading.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Custom plugins
+from plugins.exchanges import east_africa
+from plugins.prediction import fx_arima, fx_lstm
 
-# ---------------------------
-# Prometheus Metrics (safe init)
-# ---------------------------
-def get_or_create_gauge(name, description):
-    try:
-        return REGISTRY._names_to_collectors[name]
-    except KeyError:
-        return Gauge(name, description)
+# Configure logging
+logging.basicConfig(filename="logs/app.log", level=logging.INFO)
 
-if "metrics_initialized" not in st.session_state:
-    st.session_state.trade_count = get_or_create_gauge("sai_trade_count", "Number of trades executed")
-    st.session_state.profit_metric = get_or_create_gauge("sai_profit", "Cumulative profit")
-    start_http_server(8000)  # start only once
-    st.session_state.metrics_initialized = True
-
-# ---------------------------
-# Session State Initialization
-# ---------------------------
-if "trades" not in st.session_state:
-    st.session_state.trades = []
-if "running" not in st.session_state:
-    st.session_state.running = False
-if "profit" not in st.session_state:
-    st.session_state.profit = 0.0
-
-# ---------------------------
-# Dummy Trading Loop
-# ---------------------------
-def trading_loop():
-    while st.session_state.running:
-        trade = {
-            "time": time.strftime("%H:%M:%S"),
-            "price": 100 + len(st.session_state.trades),
-            "profit": 1.0
-        }
-        st.session_state.trades.append(trade)
-        st.session_state.profit += trade["profit"]
-
-        st.session_state.trade_count.set(len(st.session_state.trades))
-        st.session_state.profit_metric.set(st.session_state.profit)
-
-        logging.info(f"Trade executed: {trade}")
-        time.sleep(2)
-
-# ---------------------------
 # Tabs
-# ---------------------------
-st.title("SAI Trading Bot Cockpit")
+tabs = st.tabs([
+    "Dashboard", "Strategy Config", "Logs",
+    "Forecast", "Daily Graph", "Debug"
+])
 
-tabs = st.tabs(["Dashboard", "Strategy Config", "Logs", "Model Testing", "Debug"])
-
-# Dashboard Tab
+# Dashboard
 with tabs[0]:
-    st.header("Live Dashboard")
-    if st.button("Start Trading") and not st.session_state.running:
-        st.session_state.running = True
-        threading.Thread(target=trading_loop, daemon=True).start()
-    if st.button("Stop Trading"):
-        st.session_state.running = False
+    st.header("Eastern Africa FX Dashboard")
+    rates = east_africa.get_rates()
+    df = pd.DataFrame(rates["rates"].items(), columns=["Currency", "Rate"])
+    st.write("Base:", rates["base"], "Timestamp:", rates["timestamp"])
+    st.dataframe(df)
+    st.bar_chart(df.set_index("Currency"))
 
-    st.metric("Total Trades", len(st.session_state.trades))
-    st.metric("Cumulative Profit", f"${st.session_state.profit:.2f}")
-
-    # Risk Alerts
-    if st.session_state.profit < 0:
-        st.error("⚠️ ALERT: Profit is negative! Review strategy immediately.")
-    elif st.session_state.profit < 5:
-        st.warning("⚠️ Profit is low — consider adjusting risk parameters.")
-    else:
-        st.success("✅ Profit levels are healthy.")
-
-    if st.session_state.trades:
-        df = pd.DataFrame(st.session_state.trades)
-        st.line_chart(df[["price", "profit"]])
-
-# Strategy Config Tab
+# Strategy Config
 with tabs[1]:
-    st.header("Strategy Configuration")
-    risk_level = st.slider("Risk Level", 1, 10, 5)
-    st.write(f"Selected Risk Level: {risk_level}")
+    st.header("Strategy Config")
+    base_currency = st.selectbox(
+        "Base Currency",
+        ["USD", "EUR", "GBP"] + east_africa.CURRENCIES
+    )
+    st.write("Selected base:", base_currency)
 
-# Logs Tab
+# Logs
 with tabs[2]:
-    st.header("Execution Logs")
+    st.header("System Logs")
     try:
-        with open("sai_trading.log", "r") as f:
-            logs = f.read()
-        st.text_area("Logs", logs, height=300)
+        with open("logs/app.log") as f:
+            st.text(f.read())
     except FileNotFoundError:
         st.warning("No logs yet.")
 
-# Model Testing Tab
+# Forecast
 with tabs[3]:
-    st.header("Model Testing")
-    uploaded_file = st.file_uploader("Upload test dataset (CSV)", type="csv")
-    if uploaded_file:
-        df_test = pd.read_csv(uploaded_file)
-        st.write(df_test.head())
+    st.header("FX Forecasts")
+    currency = st.selectbox("Select Currency", east_africa.CURRENCIES)
+    horizon = st.slider("Forecast Horizon (days)", 7, 30, 7)
 
-# Debug Tab
+    # Historical series
+    history = east_africa.get_daily_history(currency)
+    if history:
+        df_hist = pd.DataFrame(history, columns=["Date", "Rate"])
+        df_hist["Date"] = pd.to_datetime(df_hist["Date"])
+        series = df_hist["Rate"]
+
+        # ARIMA forecast
+        arima_preds = fx_arima.forecast(series, steps=horizon)
+        st.line_chart(pd.Series(arima_preds, name="ARIMA Forecast"))
+
+        # LSTM forecast
+        lstm_model = fx_lstm.train_lstm(series.values, epochs=5)
+        lstm_preds = fx_lstm.forecast(lstm_model, series.values, steps=horizon)
+        st.line_chart(pd.Series(lstm_preds, name="LSTM Forecast"))
+    else:
+        st.warning("No historical data available for forecasting.")
+
+# Daily Graph
 with tabs[4]:
-    st.header("Debug Panel")
-    st.json({
-        "running": st.session_state.running,
-        "trades": len(st.session_state.trades),
-        "profit": st.session_state.profit
-    })
+    st.header("Daily FX Graph")
+    currency = st.selectbox("Currency for Daily Graph", east_africa.CURRENCIES)
+    history = east_africa.get_daily_history(currency)
+
+    if history:
+        df_hist = pd.DataFrame(history, columns=["Date", "Rate"])
+        df_hist["Date"] = pd.to_datetime(df_hist["Date"])
+        st.line_chart(df_hist.set_index("Date"))
+    else:
+        st.warning("No daily history available.")
+
+# Debug
+with tabs[5]:
+    st.header("Debug Tools")
+    st.write("Session State:", st.session_state)
