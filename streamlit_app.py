@@ -4,6 +4,10 @@ import threading
 import time
 import logging
 import matplotlib.pyplot as plt
+import pandas as pd
+import random
+
+from sai.bot.main import run_bot, load_model, test_model
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +23,8 @@ if "bot_running" not in st.session_state:
     st.session_state.bot_running = False
 if "logs" not in st.session_state:
     st.session_state.logs = []
+if "rates" not in st.session_state:
+    st.session_state.rates = {}
 
 # Helper: threaded bot runner
 def start_bot():
@@ -43,6 +49,19 @@ def stop_bot():
     st.session_state.bot_running = False
     logging.info("Bot stop requested.")
 
+# --- Currency & Forecast Helpers ---
+def fetch_currency_data():
+    # Dummy currency rates for demo
+    currencies = ["USD", "EUR", "GBP", "JPY", "UGX"]
+    rates = {cur: round(random.uniform(0.5, 1500), 2) for cur in currencies}
+    st.session_state.rates = rates
+    return rates
+
+def forecast_rates(rates):
+    # Simple forecast: add random drift
+    forecast = {cur: val * (1 + random.uniform(-0.05, 0.05)) for cur, val in rates.items()}
+    return forecast
+
 # --- Streamlit UI ---
 st.set_page_config(page_title="SAI Trading Bot", layout="wide")
 st.title("📈 SAI Trading Bot Dashboard")
@@ -61,12 +80,22 @@ with tabs[0]:
             stop_bot()
 
     with col2:
-        st.write("Market Snapshot")
-        try:
-            data = get_data()
-            st.json(data)
-        except Exception as e:
-            st.error(f"Data fetch error: {e}")
+        st.write("💱 Currency Rates")
+        rates = fetch_currency_data()
+        st.table(pd.DataFrame(rates.items(), columns=["Currency", "Rate"]))
+
+        st.write("📊 Forecasted Rates")
+        forecast = forecast_rates(rates)
+        st.table(pd.DataFrame(forecast.items(), columns=["Currency", "Forecast"]))
+
+        # Graph visualization
+        fig, ax = plt.subplots()
+        ax.bar(rates.keys(), rates.values(), alpha=0.6, label="Current")
+        ax.bar(forecast.keys(), forecast.values(), alpha=0.6, label="Forecast")
+        ax.set_ylabel("Rate")
+        ax.set_title("Currency Rates vs Forecast")
+        ax.legend()
+        st.pyplot(fig)
 
     st.write("Trade Logs (latest 10)")
     st.table(st.session_state.logs[-10:])
@@ -76,7 +105,6 @@ with tabs[1]:
     st.header("Strategy Configuration")
     risk_level = st.slider("Risk Level", 1, 10, 5)
     st.write(f"Selected Risk Level: {risk_level}")
-    # Extend with more strategy parameters as needed
 
 # Logs Tab
 with tabs[2]:
@@ -98,7 +126,6 @@ with tabs[3]:
         test_results = test_model(model)
         st.write("Test Results:", test_results)
 
-        # Example visualization
         fig, ax = plt.subplots()
         ax.plot(test_results.get("predictions", []), label="Predictions")
         ax.legend()
