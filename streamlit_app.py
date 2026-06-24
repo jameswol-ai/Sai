@@ -3,8 +3,7 @@ import threading
 import time
 import logging
 import pandas as pd
-import matplotlib.pyplot as plt
-from prometheus_client import Gauge, start_http_server
+from prometheus_client import Gauge, start_http_server, REGISTRY
 
 # ---------------------------
 # Logging Setup
@@ -16,12 +15,20 @@ logging.basicConfig(
 )
 
 # ---------------------------
-# Prometheus Metrics
+# Prometheus Metrics (safe init)
 # ---------------------------
-trade_count = Gauge("sai_trade_count", "Number of trades executed")
-profit_metric = Gauge("sai_profit", "Cumulative profit")
+def get_or_create_gauge(name, description):
+    try:
+        return REGISTRY._names_to_collectors[name]
+    except KeyError:
+        return Gauge(name, description)
 
-start_http_server(8000)
+if "metrics_initialized" not in st.session_state:
+    st.session_state.trade_count = get_or_create_gauge("sai_trade_count", "Number of trades executed")
+    st.session_state.profit_metric = get_or_create_gauge("sai_profit", "Cumulative profit")
+    # Start server only once
+    start_http_server(8000)
+    st.session_state.metrics_initialized = True
 
 # ---------------------------
 # Session State Initialization
@@ -42,8 +49,8 @@ def trading_loop():
         st.session_state.trades.append(trade)
         st.session_state.profit += trade["profit"]
 
-        trade_count.set(len(st.session_state.trades))
-        profit_metric.set(st.session_state.profit)
+        st.session_state.trade_count.set(len(st.session_state.trades))
+        st.session_state.profit_metric.set(st.session_state.profit)
 
         logging.info(f"Trade executed: {trade}")
         time.sleep(2)
