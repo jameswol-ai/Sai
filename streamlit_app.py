@@ -1,6 +1,5 @@
 import streamlit as st
 import importlib
-import sai.plugins as plugins  # unified import path
 
 def render_plugins_tab():
     st.title("Plugin Manager")
