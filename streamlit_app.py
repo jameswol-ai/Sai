@@ -5,8 +5,6 @@ import time
 import logging
 import matplotlib.pyplot as plt
 
-from sai.bot.main import run_bot, get_data, load_model, test_model
-
 # Configure logging
 logging.basicConfig(
     filename="sai_app.log",
