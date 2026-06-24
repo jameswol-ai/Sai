@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-import plotly.express as px
 
 # Example synthetic trade data
 np.random.seed(42)
