@@ -1,4 +1,3 @@
-# sai/streamlit_app.py
 import streamlit as st
 import threading
 import time
@@ -10,37 +9,25 @@ import random
 import pickle
 from datetime import datetime, timedelta
 import queue
-import traceback
 import numpy as np
 import requests
+import os
 
 # -------------------- Custom CSS for modern forex dashboard --------------------
 st.markdown("""
 <style>
-    /* Dark theme with professional colors */
-    .main {
-        background-color: #0E1117;
-    }
-    .stApp {
-        background-color: #0E1117;
-    }
-    .css-1d391kg {
-        background-color: #0E1117;
-    }
+    .main { background-color: #0E1117; }
+    .stApp { background-color: #0E1117; }
+    .css-1d391kg { background-color: #0E1117; }
     div[data-testid="stMetricValue"] {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #FFFFFF;
+        font-size: 1.8rem; font-weight: 700; color: #FFFFFF;
     }
     div[data-testid="stMetricLabel"] {
-        font-size: 0.9rem;
-        color: #AAAAAA;
+        font-size: 0.9rem; color: #AAAAAA;
     }
     .forex-card {
         background: linear-gradient(135deg, #1E1E2F 0%, #252540 100%);
-        border-radius: 16px;
-        padding: 20px;
-        margin: 8px 0;
+        border-radius: 16px; padding: 20px; margin: 8px 0;
         border: 1px solid rgba(255,255,255,0.1);
         box-shadow: 0 4px 12px rgba(0,0,0,0.4);
         transition: all 0.3s ease;
@@ -50,71 +37,38 @@ st.markdown("""
         box-shadow: 0 4px 20px rgba(0,242,254,0.3);
     }
     .currency-pair {
-        font-size: 1.3rem;
-        font-weight: 600;
-        color: #E0E0E0;
-        margin-bottom: 8px;
+        font-size: 1.3rem; font-weight: 600; color: #E0E0E0; margin-bottom: 8px;
     }
     .rate-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #FFFFFF;
+        font-size: 2rem; font-weight: 700; color: #FFFFFF;
     }
     .change-positive {
-        color: #00C853;
-        font-weight: 600;
+        color: #00C853; font-weight: 600;
     }
     .change-negative {
-        color: #FF1744;
-        font-weight: 600;
+        color: #FF1744; font-weight: 600;
     }
     .section-title {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #FFFFFF;
-        margin: 20px 0 10px 0;
-        border-bottom: 2px solid #00F2FE;
-        padding-bottom: 5px;
-        display: inline-block;
+        font-size: 1.5rem; font-weight: 700; color: #FFFFFF;
+        margin: 20px 0 10px 0; border-bottom: 2px solid #00F2FE;
+        padding-bottom: 5px; display: inline-block;
     }
     .stButton > button {
         background: linear-gradient(90deg, #00F2FE 0%, #4FACFE 100%);
-        color: black;
-        font-weight: 600;
-        border: none;
-        border-radius: 8px;
-        padding: 10px 20px;
-        transition: 0.3s;
+        color: black; font-weight: 600; border: none;
+        border-radius: 8px; padding: 10px 20px; transition: 0.3s;
     }
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,242,254,0.5);
     }
-    .trade-signal-buy {
-        background-color: #00C853;
-        color: black;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
-    .trade-signal-sell {
-        background-color: #FF1744;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
-    .trade-signal-hold {
-        background-color: #FFD600;
-        color: black;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-weight: bold;
-    }
+    .trade-signal-buy { background-color: #00C853; color: black; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
+    .trade-signal-sell { background-color: #FF1744; color: white; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
+    .trade-signal-hold { background-color: #FFD600; color: black; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- Safe stubs (real plugins can override) --------------------
+# -------------------- Safe stub models (real plugins can override) --------------------
 def fit_arima(series, order=(2,1,2)):
     return {"last_value": series.iloc[-1], "std": series.std()}
 
@@ -195,7 +149,7 @@ if "logs" not in st.session_state:
 if "rates" not in st.session_state:
     st.session_state.rates = {}
 if "prev_rates" not in st.session_state:
-    st.session_state.prev_rates = {}  # for delta calculation
+    st.session_state.prev_rates = {}
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame(columns=["Time", "Currency", "Rate", "Forecast"])
 if "bot_queue" not in st.session_state:
@@ -256,13 +210,18 @@ def drain_bot_queue(max_items=50):
         st.session_state.logs = st.session_state.logs[-1000:]
     return drained
 
-# -------------------- Real exchange rate fetcher --------------------
+# -------------------- East African currencies (including SSP) --------------------
 EAST_AFRICAN_CURRENCIES = ["UGX", "KES", "TZS", "RWF", "BIF", "SSP", "ETB"]
 OTHER_CURRENCIES = ["USD", "EUR", "GBP", "JPY"]
 ALL_CURRENCIES = EAST_AFRICAN_CURRENCIES + OTHER_CURRENCIES
 
+# -------------------- Real exchange rate fetcher (Frankfurter API) --------------------
 @st.cache_data(ttl=60)
 def get_real_rates():
+    """
+    Fetches live forex rates from Frankfurter API.
+    Returns a dict of currency: rate (USD base), or None on failure.
+    """
     try:
         url = "https://api.frankfurter.app/latest?from=USD&to=" + ",".join(ALL_CURRENCIES)
         resp = requests.get(url, timeout=5)
@@ -276,15 +235,25 @@ def get_real_rates():
         return None
 
 def sample_currency_rates():
+    """Generates realistic random rates for East African currencies."""
     rates = {}
-    for cur in EAST_AFRICAN_CURRENCIES:
-        rates[cur] = round(random.uniform(500, 5000), 2)
-    for cur in OTHER_CURRENCIES:
-        rates[cur] = round(random.uniform(0.5, 150), 2)
+    # Typical ranges (approx.)
+    ranges = {
+        "UGX": (3700, 3900), "KES": (125, 140), "TZS": (2500, 2700),
+        "RWF": (1300, 1500), "BIF": (2800, 3000), "SSP": (1500, 1800),
+        "ETB": (55, 60), "USD": (1, 1), "EUR": (0.9, 1.1),
+        "GBP": (0.75, 0.85), "JPY": (140, 150)
+    }
+    for cur in ALL_CURRENCIES:
+        low, high = ranges.get(cur, (100, 5000))
+        rates[cur] = round(random.uniform(low, high), 2)
     return rates
 
 def fetch_currency_data():
-    """Get current rates and compute delta vs previous."""
+    """
+    Retrieves current rates (real or simulated) and calculates percentage change
+    from the previous update for each East African currency.
+    """
     real = get_real_rates()
     if real:
         rates = real
@@ -292,7 +261,7 @@ def fetch_currency_data():
     else:
         rates = sample_currency_rates()
         st.session_state.use_real_data = False
-    # Compute deltas (percentage change) for East African currencies
+
     prev = st.session_state.prev_rates if st.session_state.prev_rates else {}
     delta = {}
     for cur in EAST_AFRICAN_CURRENCIES:
@@ -300,11 +269,13 @@ def fetch_currency_data():
             delta[cur] = ((rates[cur] - prev[cur]) / prev[cur]) * 100
         else:
             delta[cur] = None
+
     st.session_state.prev_rates = rates.copy()
     st.session_state.rates = rates
     return rates, delta
 
 def forecast_rates(rates):
+    """Random walk forecast for visual display (not used for trading)."""
     return {cur: round(val * (1 + random.uniform(-0.02, 0.02)), 2) for cur, val in rates.items()}
 
 def update_history(rates, forecast):
@@ -392,7 +363,7 @@ st.set_page_config(page_title="SAI Forex Bot - East Africa", layout="wide")
 col_title, col_status = st.columns([3, 1])
 with col_title:
     st.markdown("<h1 style='color:#00F2FE;'>📈 SAI Forex Trading Bot</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#AAAAAA; font-size:1.1rem;'>East African Currency Trading & Forecasting</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#AAAAAA; font-size:1.1rem;'>East African Currency Trading & Forecasting – UGX, KES, TZS, RWF, BIF, SSP, ETB</p>", unsafe_allow_html=True)
 
 with col_status:
     if st.session_state.use_real_data:
@@ -418,18 +389,14 @@ with tabs[0]:
     st.markdown("<div class='section-title'>🌍 East African Forex Rates (USD Base)</div>", unsafe_allow_html=True)
 
     rates, deltas = fetch_currency_data()
-    # Simple forecast for visual
     forecast = forecast_rates(rates)
     update_history(rates, forecast)
 
-    # Create a 4-column grid for the 7 East African currencies + maybe extra
+    # Create a responsive grid (4 columns)
     cols = st.columns(4)
-    east_african = EAST_AFRICAN_CURRENCIES
-
-    for i, cur in enumerate(east_african):
+    for i, cur in enumerate(EAST_AFRICAN_CURRENCIES):
         rate = rates.get(cur, 0)
         delta_val = deltas.get(cur)
-        # Format delta string
         if delta_val is not None:
             delta_str = f"{delta_val:+.2f}%"
             delta_class = "change-positive" if delta_val >= 0 else "change-negative"
@@ -437,7 +404,6 @@ with tabs[0]:
             delta_str = "N/A"
             delta_class = ""
 
-        # Forex card
         with cols[i % 4]:
             st.markdown(f"""
             <div class="forex-card">
@@ -447,8 +413,7 @@ with tabs[0]:
             </div>
             """, unsafe_allow_html=True)
 
-    # Refresh timestamp
-    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} | Auto‑refresh every 60s")
+    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} | Live rates refresh every 60s")
 
     # ---- Bot Controls & Activity ----
     col_ctrl, col_activity = st.columns([1, 2])
@@ -466,7 +431,6 @@ with tabs[0]:
             st.warning("Bot stopped unexpectedly; resetting.")
             st.session_state.bot_running = False
 
-        # Auto refresh
         auto = st.checkbox("Auto‑refresh (live)", value=st.session_state.auto_refresh)
         st.session_state.auto_refresh = auto
         if auto:
@@ -484,31 +448,31 @@ with tabs[0]:
         else:
             st.info("No trades yet. Start the bot to see activity.")
 
-    # ---- Market Trends Chart ----
+    # ---- Market Trends Chart (East African focus) ----
     if not st.session_state.history.empty:
         st.markdown("<div class='section-title'>📉 East African Rate Trends</div>", unsafe_allow_html=True)
         fig2, ax2 = plt.subplots(figsize=(10, 5))
         df_plot = st.session_state.history.copy()
         df_plot["Time_dt"] = pd.to_datetime(df_plot["Time"])
-        for cur in EAST_AFRICAN_CURRENCIES[:6]:
+        colors = plt.cm.tab10.colors  # distinct colors
+        for idx, cur in enumerate(EAST_AFRICAN_CURRENCIES):
             cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
             if not cur_data.empty:
-                ax2.plot(cur_data["Time_dt"], cur_data["Rate"], label=cur)
+                ax2.plot(cur_data["Time_dt"], cur_data["Rate"], label=cur, color=colors[idx % len(colors)])
         ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
         ax2.set_title("East African Currencies – Recent Trends", color='white')
         ax2.set_xlabel("Time", color='white')
-        ax2.set_ylabel("Rate", color='white')
+        ax2.set_ylabel("Rate (USD base)", color='white')
         ax2.tick_params(colors='white')
         ax2.set_facecolor('#0E1117')
         fig2.patch.set_facecolor('#0E1117')
         plt.xticks(rotation=45)
         st.pyplot(fig2)
 
-# ---- Remaining tabs (same as before but with minimal UI enhancements) ----
-# Daily Forecast
+# Daily Forecast tab
 with tabs[1]:
     st.markdown("<div class='section-title'>📅 Daily Forecast (Next Day)</div>", unsafe_allow_html=True)
-    currency = st.selectbox("Select Currency", ALL_CURRENCIES, key="daily_cur")
+    currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="daily_cur")
     if st.button("Generate Daily Forecast"):
         with st.spinner("Forecasting..."):
             result = run_forecast(currency, "daily", steps=1)
@@ -528,7 +492,7 @@ with tabs[1]:
 # Weekly Forecast
 with tabs[2]:
     st.markdown("<div class='section-title'>📆 Weekly Forecast (7 Days)</div>", unsafe_allow_html=True)
-    currency = st.selectbox("Select Currency", ALL_CURRENCIES, key="weekly_cur")
+    currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="weekly_cur")
     if st.button("Generate Weekly Forecast"):
         with st.spinner("Forecasting 7 days..."):
             result = run_forecast(currency, "weekly", steps=7)
@@ -552,7 +516,7 @@ with tabs[2]:
 # Monthly Forecast
 with tabs[3]:
     st.markdown("<div class='section-title'>🗓️ Monthly Forecast (30 Days)</div>", unsafe_allow_html=True)
-    currency = st.selectbox("Select Currency", ALL_CURRENCIES, key="monthly_cur")
+    currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="monthly_cur")
     if st.button("Generate Monthly Forecast"):
         with st.spinner("Forecasting 30 days..."):
             result = run_forecast(currency, "monthly", steps=30)
@@ -579,7 +543,7 @@ with tabs[4]:
     steps_map = {"Daily": 1, "Weekly": 7, "Monthly": 30}
     steps = steps_map[horizon]
 
-    if st.button("Get Trade Signals"):
+    if st.button("Get Trade Signals for East Africa"):
         signals = []
         with st.spinner("Computing signals..."):
             for cur in EAST_AFRICAN_CURRENCIES:
@@ -595,7 +559,6 @@ with tabs[4]:
                     })
         if signals:
             df_signals = pd.DataFrame(signals)
-            # Color the signal cells
             def highlight_signal(val):
                 if val == 'BUY':
                     return 'background-color: #00C853; color: black'
@@ -610,6 +573,7 @@ with tabs[4]:
 with tabs[5]:
     st.markdown("<div class='section-title'>⚙️ Strategy Configuration</div>", unsafe_allow_html=True)
     risk_level = st.slider("Risk Level", 1, 10, 5)
+    st.info("Risk level will be used in future trading logic.")
 
 # Logs
 with tabs[6]:
@@ -639,9 +603,9 @@ with tabs[7]:
 # Debug
 with tabs[8]:
     st.markdown("<div class='section-title'>🛠️ Debug</div>", unsafe_allow_html=True)
-    st.json(st.session_state)
+    st.json({k: str(v) if not isinstance(v, (dict, list, int, float, bool, type(None))) else v for k, v in st.session_state.items()})
 
-# Auto-refresh logic (outside tabs)
+# Auto-refresh logic
 if st.session_state.auto_refresh:
     drain_bot_queue(max_items=5)
     time.sleep(st.session_state.refresh_interval)
