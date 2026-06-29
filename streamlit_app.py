@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import queue
 import traceback
 import numpy as np
+import requests   # For real exchange rates
 
 # -------------------- Safe stubs (real plugins can override) --------------------
 def fit_arima(series, order=(2,1,2)):
@@ -103,6 +104,8 @@ if "auto_refresh" not in st.session_state:
     st.session_state.auto_refresh = False
 if "refresh_interval" not in st.session_state:
     st.session_state.refresh_interval = 3
+if "use_real_data" not in st.session_state:
+    st.session_state.use_real_data = False   # will be updated after first fetch
 
 HISTORY_MAX_ROWS = 1000
 
@@ -151,12 +154,30 @@ def drain_bot_queue(max_items=50):
         st.session_state.logs = st.session_state.logs[-1000:]
     return drained
 
-# -------------------- Currency & rates (simulated) --------------------
+# -------------------- Real exchange rate fetcher (Frankfurter API) --------------------
 EAST_AFRICAN_CURRENCIES = ["UGX", "KES", "TZS", "RWF", "BIF", "SSP", "ETB"]
 OTHER_CURRENCIES = ["USD", "EUR", "GBP", "JPY"]
 ALL_CURRENCIES = EAST_AFRICAN_CURRENCIES + OTHER_CURRENCIES
 
+@st.cache_data(ttl=60)   # cache for 60 seconds to respect API limits
+def get_real_rates():
+    """Fetch live rates from Frankfurter API (base=USD). Returns dict or None on failure."""
+    try:
+        # Frankfurter supports many currencies; we request all needed ones.
+        url = "https://api.frankfurter.app/latest?from=USD&to=" + ",".join(ALL_CURRENCIES)
+        resp = requests.get(url, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+        rates = data["rates"]
+        # Add USD itself
+        rates["USD"] = 1.0
+        return rates
+    except Exception as e:
+        logger.error(f"Failed to fetch real rates: {e}")
+        return None
+
 def sample_currency_rates():
+    """Fallback random rates if API fails."""
     rates = {}
     for cur in EAST_AFRICAN_CURRENCIES:
         rates[cur] = round(random.uniform(500, 5000), 2)
@@ -165,11 +186,19 @@ def sample_currency_rates():
     return rates
 
 def fetch_currency_data():
-    rates = sample_currency_rates()
+    """Get current rates: real if available, else simulated."""
+    real = get_real_rates()
+    if real:
+        rates = real
+        st.session_state.use_real_data = True
+    else:
+        rates = sample_currency_rates()
+        st.session_state.use_real_data = False
     st.session_state.rates = rates
     return rates
 
 def forecast_rates(rates):
+    """Simple short‑term jitter forecast (dashboard visual only)."""
     return {cur: round(val * (1 + random.uniform(-0.02, 0.02)), 2) for cur, val in rates.items()}
 
 def update_history(rates, forecast):
@@ -198,31 +227,27 @@ def generate_trade_signal(current_rate, forecast_value, threshold=0.01):
     else:
         return "HOLD"
 
-# -------------------- Forecast function (FIXED) --------------------
+# -------------------- Forecast function (fixed) --------------------
 def run_forecast(currency, horizon, steps, freq="D"):
-    """Returns dict with forecast data or an error string."""
     df_all = st.session_state.history.copy()
     df_all["Time_dt"] = pd.to_datetime(df_all["Time"])
     df_cur = df_all[df_all["Currency"] == currency].sort_values("Time_dt")
     if len(df_cur) < 20:
-        return "Not enough data (min 20 points)."      # <-- fixed: return a string, not a tuple
+        return "Not enough data (min 20 points)."
 
-    # Hold-out last 'steps' points for backtesting
     train = df_cur.iloc[:-steps] if steps < len(df_cur) else df_cur.iloc[:-1]
     test = df_cur.iloc[-steps:] if steps < len(df_cur) else df_cur.iloc[-1:]
     actual_test = test["Rate"].values
 
-    # ARIMA
     arima_pred = None
     arima_metrics = None
     try:
         arima_model = fit_arima(train["Rate"], order=(2,1,2))
         arima_pred = forecast_next(arima_model, steps=steps)
         arima_metrics = compute_metrics(actual_test, arima_pred[:len(actual_test)])
-    except Exception as e:
+    except Exception:
         pass
 
-    # Prophet
     prophet_pred = None
     prophet_metrics = None
     try:
@@ -231,7 +256,7 @@ def run_forecast(currency, horizon, steps, freq="D"):
         forecast_df = forecast_future(prophet_model, periods=steps, freq=freq)
         prophet_pred = forecast_df["yhat"].tolist()
         prophet_metrics = compute_metrics(actual_test, prophet_pred[:len(actual_test)])
-    except Exception as e:
+    except Exception:
         pass
 
     current_rate = df_cur["Rate"].iloc[-1]
@@ -270,9 +295,16 @@ tabs = st.tabs([
     "Debug"
 ])
 
-# Dashboard Tab (unchanged)
+# Dashboard Tab
 with tabs[0]:
     st.header("Live Dashboard")
+
+    # Show data source
+    if st.session_state.use_real_data:
+        st.success("🌍 Using live exchange rates from Frankfurter API")
+    else:
+        st.warning("📡 Offline mode – showing simulated rates")
+
     col1, col2 = st.columns([1, 1])
 
     with col1:
@@ -443,7 +475,7 @@ with tabs[4]:
         with st.spinner("Computing signals for all East African currencies..."):
             for cur in EAST_AFRICAN_CURRENCIES:
                 result = run_forecast(cur, horizon.lower(), steps)
-                if isinstance(result, dict):          # now works because error is a string
+                if isinstance(result, dict):
                     signals.append({
                         "Currency": cur,
                         "Current Rate": result['current_rate'],
@@ -502,6 +534,7 @@ with tabs[8]:
     st.write("**Bot Running:**", st.session_state.bot_running)
     st.write("**Queue Size:**", st.session_state.bot_queue.qsize())
     st.write("**History Rows:**", len(st.session_state.history))
+    st.write("**Data Source:**", "Real (Frankfurter)" if st.session_state.use_real_data else "Simulated")
     if st.button("Drain Bot Queue (debug)"):
         drained = drain_bot_queue(max_items=1000)
         st.write(f"Drained {drained} items.")
