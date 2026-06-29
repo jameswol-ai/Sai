@@ -13,11 +13,16 @@ from collections import deque
 import queue
 import numpy as np
 import requests
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import os
-import copy
 from typing import Dict, List, Optional, Any
+
+# -------------------- Optional Plotly import --------------------
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
 
 # -------------------- Custom CSS (unchanged) --------------------
 st.markdown("""
@@ -65,6 +70,9 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+if not PLOTLY_AVAILABLE:
+    st.info("📊 Install plotly for interactive charts: `pip install plotly`")
 
 # -------------------- Safe forecast stubs --------------------
 def fit_arima(series, order=(2,1,2)):
@@ -160,7 +168,6 @@ if "refresh_interval" not in st.session_state:
 if "use_real_data" not in st.session_state:
     st.session_state.use_real_data = False
 if "trading_account" not in st.session_state:
-    # Initialize simulated trading account
     st.session_state.trading_account = {
         "balance": 10000.0,
         "equity": 10000.0,
@@ -449,7 +456,6 @@ class TradingAPI:
         raise NotImplementedError
 
 class SimulatedTrading(TradingAPI):
-    """Simulated trading with virtual balance and positions."""
     def __init__(self, account: Dict):
         self.account = account
 
@@ -461,7 +467,6 @@ class SimulatedTrading(TradingAPI):
         }
 
     def place_order(self, symbol, units, stop_loss=None, take_profit=None, order_type="MARKET"):
-        # Get current rate from session state
         rate = st.session_state.rates.get(symbol, 1.0)
         order = {
             "id": len(self.account["order_history"]) + 1,
@@ -474,11 +479,9 @@ class SimulatedTrading(TradingAPI):
             "take_profit": take_profit,
             "status": "FILLED"
         }
-        # Add to positions
         self.account["open_positions"].append(order)
         self.account["order_history"].append(order)
-        # Update equity (simple P&L will be computed on close)
-        self.account["equity"] = self.account["balance"]  # Simulated: no margin effect
+        self.account["equity"] = self.account["balance"]
         return order
 
     def get_open_positions(self):
@@ -488,27 +491,19 @@ class SimulatedTrading(TradingAPI):
         return self.account["order_history"]
 
     def close_position(self, position_id):
-        # Find position by id and remove
-        pos = None
         for p in self.account["open_positions"]:
             if p["id"] == position_id:
-                pos = p
-                break
-        if pos:
-            self.account["open_positions"].remove(pos)
-            # Simulate P&L (random for demo)
-            pnl = random.uniform(-50, 50)
-            self.account["balance"] += pnl
-            self.account["equity"] = self.account["balance"]
-            pos["status"] = "CLOSED"
-            pos["pnl"] = pnl
-            self.account["order_history"].append(pos)
-            return True
+                self.account["open_positions"].remove(p)
+                pnl = random.uniform(-50, 50)
+                self.account["balance"] += pnl
+                self.account["equity"] = self.account["balance"]
+                p["status"] = "CLOSED"
+                p["pnl"] = pnl
+                self.account["order_history"].append(p)
+                return True
         return False
 
 def get_trading_api() -> TradingAPI:
-    """Factory function to return the appropriate trading API based on configuration."""
-    # Try OANDA if credentials exist
     try:
         import v20
         oanda_api_key = os.getenv("OANDA_API_KEY") or st.secrets.get("OANDA_API_KEY")
@@ -523,11 +518,9 @@ def get_trading_api() -> TradingAPI:
             return OANDA_Trading(ctx, oanda_account_id)
     except ImportError:
         pass
-    # Default to simulated
     return SimulatedTrading(st.session_state.trading_account)
 
 class OANDA_Trading(TradingAPI):
-    """Real trading via OANDA v20 REST API."""
     def __init__(self, ctx, account_id):
         self.ctx = ctx
         self.account_id = account_id
@@ -544,7 +537,6 @@ class OANDA_Trading(TradingAPI):
         }
 
     def place_order(self, symbol, units, stop_loss=None, take_profit=None, order_type="MARKET"):
-        # Format symbol for OANDA (e.g., "USD_UGX")
         instr = f"{symbol[:3]}_{symbol[3:]}" if len(symbol) == 6 else f"USD_{symbol}"
         order = {
             "order": {
@@ -578,7 +570,6 @@ class OANDA_Trading(TradingAPI):
 # -------------------- Streamlit UI --------------------
 st.set_page_config(page_title="SAI Forex Bot - East Africa", layout="wide")
 
-# ----- Top bar -----
 col_title, col_status = st.columns([3, 1])
 with col_title:
     st.markdown("<h1 style='color:#00F2FE;'>📈 SAI Forex Trading Bot</h1>", unsafe_allow_html=True)
@@ -596,7 +587,7 @@ tabs = st.tabs([
     "📆 Weekly Forecast",
     "🗓️ Monthly Forecast",
     "📈 Trade Recommendations",
-    "💹 Live Trading",          # <-- NEW TAB
+    "💹 Live Trading",
     "📉 Technical Analysis",
     "⚙️ Strategy Config",
     "📋 Logs",
@@ -606,7 +597,6 @@ tabs = st.tabs([
 
 # --- Dashboard ---
 with tabs[0]:
-    # ... (existing code unchanged, omitted for brevity, but included in full file)
     st.markdown("<div class='section-title'>🌍 East African Forex Rates (USD Base)</div>", unsafe_allow_html=True)
     rates, deltas = fetch_currency_data()
     forecast = forecast_rates(rates)
@@ -663,32 +653,45 @@ with tabs[0]:
 
     if not st.session_state.history.empty:
         st.markdown("<div class='section-title'>📉 East African Rate Trends</div>", unsafe_allow_html=True)
-        fig2 = go.Figure()
         df_plot = st.session_state.history.copy()
         df_plot["Time_dt"] = pd.to_datetime(df_plot["Time"])
-        colors = ['#00F2FE', '#FFD600', '#FF1744', '#00C853', '#FF9100', '#D500F9', '#2979FF']
-        for idx, cur in enumerate(EAST_AFRICAN_CURRENCIES):
-            cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
-            if not cur_data.empty:
-                fig2.add_trace(go.Scatter(
-                    x=cur_data["Time_dt"], y=cur_data["Rate"],
-                    mode='lines', name=cur,
-                    line=dict(color=colors[idx % len(colors)]),
-                    hovertemplate=f'{cur}: %{{y:,.2f}}<extra></extra>'
-                ))
-        fig2.update_layout(
-            template="plotly_dark",
-            hovermode="x unified",
-            title="East African Currencies – Recent Trends",
-            xaxis_title="Time",
-            yaxis_title="Rate (USD base)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig2, use_container_width=True)
+        if PLOTLY_AVAILABLE:
+            fig2 = go.Figure()
+            colors = ['#00F2FE', '#FFD600', '#FF1744', '#00C853', '#FF9100', '#D500F9', '#2979FF']
+            for idx, cur in enumerate(EAST_AFRICAN_CURRENCIES):
+                cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
+                if not cur_data.empty:
+                    fig2.add_trace(go.Scatter(
+                        x=cur_data["Time_dt"], y=cur_data["Rate"],
+                        mode='lines', name=cur,
+                        line=dict(color=colors[idx % len(colors)]),
+                        hovertemplate=f'{cur}: %{{y:,.2f}}<extra></extra>'
+                    ))
+            fig2.update_layout(
+                template="plotly_dark",
+                hovermode="x unified",
+                title="East African Currencies – Recent Trends",
+                xaxis_title="Time",
+                yaxis_title="Rate (USD base)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            # Fallback to Matplotlib
+            fig, ax = plt.subplots(figsize=(10, 4))
+            for cur in EAST_AFRICAN_CURRENCIES:
+                cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
+                if not cur_data.empty:
+                    ax.plot(cur_data["Time_dt"], cur_data["Rate"], label=cur)
+            ax.legend(loc="upper left", bbox_to_anchor=(1,1))
+            ax.set_title("East African Currencies – Recent Trends")
+            ax.set_xlabel("Time")
+            ax.set_ylabel("Rate (USD base)")
+            fig.autofmt_xdate()
+            st.pyplot(fig)
 
 # --- Daily Forecast (unchanged) ---
 with tabs[1]:
-    # ... (same as previous version)
     st.markdown("<div class='section-title'>📅 Daily Forecast (Next Day)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="daily_cur")
     if st.button("Generate Daily Forecast"):
@@ -708,7 +711,6 @@ with tabs[1]:
 
 # --- Weekly Forecast (unchanged) ---
 with tabs[2]:
-    # ... (same as previous version)
     st.markdown("<div class='section-title'>📆 Weekly Forecast (7 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="weekly_cur")
     if st.button("Generate Weekly Forecast"):
@@ -732,7 +734,6 @@ with tabs[2]:
 
 # --- Monthly Forecast (unchanged) ---
 with tabs[3]:
-    # ... (same as previous version)
     st.markdown("<div class='section-title'>🗓️ Monthly Forecast (30 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="monthly_cur")
     if st.button("Generate Monthly Forecast"):
@@ -755,7 +756,6 @@ with tabs[3]:
 
 # --- Trade Recommendations (unchanged) ---
 with tabs[4]:
-    # ... (same as previous version)
     st.markdown("<div class='section-title'>📊 Trade Recommendations</div>", unsafe_allow_html=True)
     horizon = st.radio("Horizon", ["Daily", "Weekly", "Monthly"], horizontal=True)
     steps_map = {"Daily": 1, "Weekly": 7, "Monthly": 30}
@@ -791,7 +791,7 @@ with tabs[4]:
         else:
             st.warning("No signals generated.")
 
-# --- Live Trading Tab (NEW) ---
+# --- Live Trading Tab (unchanged) ---
 with tabs[5]:
     st.markdown("<div class='section-title'>💹 Live Trading</div>", unsafe_allow_html=True)
     trading_api = get_trading_api()
@@ -800,7 +800,6 @@ with tabs[5]:
     if is_simulated:
         st.info("🔹 Running in **Simulated Trading** mode. To use a real broker, set OANDA_API_KEY and OANDA_ACCOUNT_ID in environment or Streamlit Secrets.")
 
-    # Account Summary
     col_sum, col_action = st.columns([1, 2])
     with col_sum:
         st.subheader("Account")
@@ -833,7 +832,6 @@ with tabs[5]:
                 except Exception as e:
                     st.error(f"Order failed: {e}")
 
-    # Open Positions
     st.subheader("Open Positions")
     try:
         positions = trading_api.get_open_positions()
@@ -841,7 +839,6 @@ with tabs[5]:
             if is_simulated:
                 df_pos = pd.DataFrame(positions)
                 st.dataframe(df_pos)
-                # Close position button
                 pos_ids = [p["id"] for p in positions]
                 close_id = st.selectbox("Position ID to close", pos_ids, key="close_pos")
                 if st.button("Close Position"):
@@ -851,7 +848,6 @@ with tabs[5]:
                     else:
                         st.error("Position not found.")
             else:
-                # OANDA returns complex structure, display simplified
                 for pos in positions:
                     st.json(pos)
         else:
@@ -859,7 +855,6 @@ with tabs[5]:
     except Exception as e:
         st.error(f"Error fetching positions: {e}")
 
-    # Order History
     st.subheader("Order History")
     try:
         history = trading_api.get_order_history()
@@ -875,21 +870,16 @@ with tabs[5]:
     except Exception as e:
         st.error(f"Error fetching history: {e}")
 
-    # Auto‑trade toggle
     st.subheader("Auto‑Trading")
     auto_trade = st.checkbox("Enable auto‑trade from signals", value=st.session_state.auto_trade,
                             help="Automatically execute BUY/SELL signals generated in Trade Recommendations tab.")
     st.session_state.auto_trade = auto_trade
     if auto_trade and st.button("Run Auto‑Trade Now"):
-        # This would require obtaining signals and executing them – here we just simulate
         st.info("Auto‑trade would place orders based on the latest signals. (Implementation depends on signal generation.)")
-        # Example: if we have current signals, loop and place trades
-        # For brevity, we leave this as a placeholder; you can integrate the signals from tabs[4]
         st.warning("Auto‑trade logic is still a placeholder. You can extend by calling run_forecast and placing orders accordingly.")
 
-# --- Technical Analysis (unchanged from previous expanded version) ---
+# --- Technical Analysis (with fallback) ---
 with tabs[6]:
-    # ... (same as before with Stochastic, OBV, ATR, etc.) 
     st.markdown("<div class='section-title'>📉 Technical Indicators</div>", unsafe_allow_html=True)
     if st.session_state.history.empty:
         st.info("No historical data yet. Start the bot to collect data.")
@@ -924,42 +914,74 @@ with tabs[6]:
                 col11.metric("OBV", f"{latest['OBV']:,.0f}")
                 col12.metric("Trend", "Bullish" if latest['SMA_20'] > latest['SMA_50'] else "Bearish" if pd.notna(latest['SMA_20']) else "N/A")
 
-                fig = make_subplots(
-                    rows=5, cols=1,
-                    shared_xaxes=True,
-                    vertical_spacing=0.02,
-                    row_heights=[0.45, 0.15, 0.15, 0.15, 0.1],
-                    subplot_titles=("Price & Bollinger Bands", "RSI", "MACD", "Stochastic", "Volume / OBV")
-                )
+                # Chart: Plotly or Matplotlib fallback
+                if PLOTLY_AVAILABLE:
+                    fig = make_subplots(
+                        rows=5, cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.02,
+                        row_heights=[0.45, 0.15, 0.15, 0.15, 0.1],
+                        subplot_titles=("Price & Bollinger Bands", "RSI", "MACD", "Stochastic", "Volume / OBV")
+                    )
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["Rate"], mode='lines', name='Rate', line=dict(color='#00F2FE', width=2)), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["BB_upper"], mode='lines', name='BB Upper', line=dict(color='gray', dash='dot')), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["BB_middle"], mode='lines', name='BB Middle', line=dict(color='orange', dash='dot')), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["BB_lower"], mode='lines', name='BB Lower', line=dict(color='gray', dash='dot')), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["RSI"], mode='lines', name='RSI', line=dict(color='#FFD600', width=1.5)), row=2, col=1)
+                    fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
+                    fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["MACD"], mode='lines', name='MACD', line=dict(color='blue')), row=3, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["MACD_signal"], mode='lines', name='Signal', line=dict(color='red')), row=3, col=1)
+                    colors_hist = ['green' if val >= 0 else 'red' for val in ind_df["MACD_hist"]]
+                    fig.add_trace(go.Bar(x=ind_df["Time_dt"], y=ind_df["MACD_hist"], name='Histogram', marker_color=colors_hist), row=3, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["Stoch_%K"], mode='lines', name='%K', line=dict(color='cyan')), row=4, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["Stoch_%D"], mode='lines', name='%D', line=dict(color='magenta', dash='dot')), row=4, col=1)
+                    fig.add_hline(y=80, line_dash="dash", line_color="red", row=4, col=1)
+                    fig.add_hline(y=20, line_dash="dash", line_color="green", row=4, col=1)
+                    fig.add_trace(go.Bar(x=ind_df["Time_dt"], y=np.random.randint(500, 2000, size=len(ind_df)), name='Volume', marker_color='#7F7F7F'), row=5, col=1)
+                    fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["OBV"], mode='lines', name='OBV', line=dict(color='orange')), row=5, col=1)
+                    fig.update_layout(height=1200, template="plotly_dark", showlegend=True, hovermode="x unified")
+                    fig.update_xaxes(title_text="Time", row=5, col=1)
+                    fig.update_yaxes(title_text="Rate", row=1, col=1)
+                    fig.update_yaxes(title_text="RSI", range=[0,100], row=2, col=1)
+                    fig.update_yaxes(title_text="MACD", row=3, col=1)
+                    fig.update_yaxes(title_text="Stochastic", range=[0,100], row=4, col=1)
+                    fig.update_yaxes(title_text="Vol / OBV", row=5, col=1)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    # Matplotlib fallback: simpler multi-panel chart
+                    fig, axes = plt.subplots(5, 1, figsize=(12, 18), sharex=True)
+                    axes[0].plot(ind_df["Time_dt"], ind_df["Rate"], label="Rate", color="cyan")
+                    axes[0].plot(ind_df["Time_dt"], ind_df["BB_upper"], linestyle="--", color="gray")
+                    axes[0].plot(ind_df["Time_dt"], ind_df["BB_middle"], linestyle="--", color="orange")
+                    axes[0].plot(ind_df["Time_dt"], ind_df["BB_lower"], linestyle="--", color="gray")
+                    axes[0].set_title("Price & Bollinger Bands")
+                    axes[0].legend()
+                    axes[1].plot(ind_df["Time_dt"], ind_df["RSI"], color="gold")
+                    axes[1].axhline(70, linestyle="--", color="red")
+                    axes[1].axhline(30, linestyle="--", color="green")
+                    axes[1].set_title("RSI")
+                    axes[1].set_ylim(0, 100)
+                    axes[2].plot(ind_df["Time_dt"], ind_df["MACD"], label="MACD", color="blue")
+                    axes[2].plot(ind_df["Time_dt"], ind_df["MACD_signal"], label="Signal", color="red")
+                    axes[2].bar(ind_df["Time_dt"], ind_df["MACD_hist"], color=["g" if v>=0 else "r" for v in ind_df["MACD_hist"]], alpha=0.5)
+                    axes[2].set_title("MACD")
+                    axes[2].legend()
+                    axes[3].plot(ind_df["Time_dt"], ind_df["Stoch_%K"], label="%K", color="cyan")
+                    axes[3].plot(ind_df["Time_dt"], ind_df["Stoch_%D"], label="%D", color="magenta")
+                    axes[3].axhline(80, linestyle="--", color="red")
+                    axes[3].axhline(20, linestyle="--", color="green")
+                    axes[3].set_title("Stochastic")
+                    axes[3].legend()
+                    axes[3].set_ylim(0, 100)
+                    axes[4].bar(ind_df["Time_dt"], np.random.randint(500, 2000, size=len(ind_df)), color="gray", alpha=0.5, label="Volume")
+                    axes[4].plot(ind_df["Time_dt"], ind_df["OBV"], color="orange", label="OBV")
+                    axes[4].set_title("Volume / OBV")
+                    axes[4].legend()
+                    plt.xticks(rotation=45)
+                    st.pyplot(fig)
 
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["Rate"], mode='lines', name='Rate', line=dict(color='#00F2FE', width=2)), row=1, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["BB_upper"], mode='lines', name='BB Upper', line=dict(color='gray', dash='dot')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["BB_middle"], mode='lines', name='BB Middle', line=dict(color='orange', dash='dot')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["BB_lower"], mode='lines', name='BB Lower', line=dict(color='gray', dash='dot')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["RSI"], mode='lines', name='RSI', line=dict(color='#FFD600', width=1.5)), row=2, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["MACD"], mode='lines', name='MACD', line=dict(color='blue')), row=3, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["MACD_signal"], mode='lines', name='Signal', line=dict(color='red')), row=3, col=1)
-                colors_hist = ['green' if val >= 0 else 'red' for val in ind_df["MACD_hist"]]
-                fig.add_trace(go.Bar(x=ind_df["Time_dt"], y=ind_df["MACD_hist"], name='Histogram', marker_color=colors_hist), row=3, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["Stoch_%K"], mode='lines', name='%K', line=dict(color='cyan')), row=4, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["Stoch_%D"], mode='lines', name='%D', line=dict(color='magenta', dash='dot')), row=4, col=1)
-                fig.add_hline(y=80, line_dash="dash", line_color="red", row=4, col=1)
-                fig.add_hline(y=20, line_dash="dash", line_color="green", row=4, col=1)
-                fig.add_trace(go.Bar(x=ind_df["Time_dt"], y=np.random.randint(500, 2000, size=len(ind_df)), name='Volume', marker_color='#7F7F7F'), row=5, col=1)
-                fig.add_trace(go.Scatter(x=ind_df["Time_dt"], y=ind_df["OBV"], mode='lines', name='OBV', line=dict(color='orange')), row=5, col=1)
-
-                fig.update_layout(height=1200, template="plotly_dark", showlegend=True, hovermode="x unified")
-                fig.update_xaxes(title_text="Time", row=5, col=1)
-                fig.update_yaxes(title_text="Rate", row=1, col=1)
-                fig.update_yaxes(title_text="RSI", range=[0,100], row=2, col=1)
-                fig.update_yaxes(title_text="MACD", row=3, col=1)
-                fig.update_yaxes(title_text="Stochastic", range=[0,100], row=4, col=1)
-                fig.update_yaxes(title_text="Vol / OBV", row=5, col=1)
-
-                st.plotly_chart(fig, use_container_width=True)
-
+                # Interpretation
                 rsi_val = latest['RSI']
                 if rsi_val > 70:
                     st.warning(f"RSI overbought ({rsi_val:.1f}) – consider SELL.")
