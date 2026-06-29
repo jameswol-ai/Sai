@@ -16,6 +16,10 @@ import requests
 import os
 import warnings
 from typing import Dict, List, Optional, Any, Tuple
+from sai.features.live_stream import start_live_stream, stop_live_stream, get_live_rates
+from sai.features.sentiment import fetch_news_sentiment
+from sai.features.risk import calculate_position_size
+from sai.features.alerts import send_telegram
 
 # -------------------- Optional Plotly import --------------------
 try:
