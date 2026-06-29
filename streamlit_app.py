@@ -1,186 +1,142 @@
 # =========================================================
-# SAI CORE V1
-# Stable AI Trading System
-# Modular Multi-Agent Trading + Backtesting Core
-# Single-File Streamlit Engine
+# SAI V3 — EVOLUTIONARY INTELLIGENCE CORE
+# Genetic Multi-Agent Trading System
 # =========================================================
 
-import streamlit as st
-import json
-import uuid
 import random
+import copy
 import math
-from datetime import datetime
-from pathlib import Path
 
 # =========================================================
-# CONFIG
+# FEATURES ENGINE
 # =========================================================
 
-st.set_page_config(
-    page_title="SAI CORE V1",
-    layout="wide",
-    page_icon="📈"
-)
+def compute_features(data):
+    returns = [data[i] - data[i-1] for i in range(1, len(data))]
 
-st.title("🧠 SAI CORE V1 — Autonomous Trading Intelligence Engine")
+    momentum = sum(returns[-5:]) if len(returns) >= 5 else sum(returns)
+    volatility = sum(abs(r) for r in returns[-5:]) / 5 if len(returns) >= 5 else 1
+    trend = (data[-1] - data[0]) / len(data)
 
-# =========================================================
-# MEMORY LAYER
-# =========================================================
-
-MEMORY_FILE = Path("sai_memory.json")
-
-def load_memory():
-    if MEMORY_FILE.exists():
-        return json.loads(MEMORY_FILE.read_text())
-    return {"trades": [], "strategies": [], "logs": []}
-
-def save_memory(mem):
-    MEMORY_FILE.write_text(json.dumps(mem, indent=2))
-
-memory = load_memory()
+    return {
+        "momentum": momentum,
+        "volatility": volatility,
+        "trend": trend
+    }
 
 # =========================================================
-# MARKET SIMULATOR (PLACEHOLDER ENGINE)
+# AGENT SPECIES
 # =========================================================
 
-def generate_market_data(n=50):
-    base = 100
-    data = []
-    for i in range(n):
-        base += random.uniform(-2, 2)
-        data.append(round(base, 2))
-    return data
+class Agent:
+    def __init__(self, name):
+        self.name = name
+        self.weight = random.uniform(0.5, 1.5)
+        self.fitness = 1.0
+
+    def vote(self, f):
+        return 0
+
+    def mutate(self):
+        child = copy.deepcopy(self)
+        child.weight += random.uniform(-0.2, 0.2)
+        child.weight = max(0.1, child.weight)
+        child.fitness = 1.0
+        child.name = self.name + "_m"
+        return child
+
+# ---------------------------------------------------------
+# SPECIALIZED AGENTS
+# ---------------------------------------------------------
+
+class MomentumAgent(Agent):
+    def vote(self, f):
+        return self.weight * (1 if f["momentum"] > 0 else -1)
+
+class MeanReversionAgent(Agent):
+    def vote(self, f):
+        return self.weight * (-1 if f["momentum"] > 0 else 1)
+
+class RiskAgent(Agent):
+    def vote(self, f):
+        return self.weight * (-1 if f["volatility"] > 2 else 0.5)
+
+class TrendAgent(Agent):
+    def vote(self, f):
+        return self.weight * (1 if f["trend"] > 0 else -1)
+
+class NoiseAgent(Agent):
+    def vote(self, f):
+        return self.weight * random.uniform(-1, 1)
 
 # =========================================================
-# SIGNAL ENGINE
+# EVOLUTION CORE
 # =========================================================
 
-def simple_signal(data):
-    if len(data) < 5:
-        return "HOLD"
+class EvolutionEngine:
+    def __init__(self):
+        self.population = [
+            MomentumAgent("momentum"),
+            MeanReversionAgent("reversion"),
+            RiskAgent("risk"),
+            TrendAgent("trend"),
+            NoiseAgent("noise")
+        ]
 
-    short = sum(data[-3:]) / 3
-    long = sum(data[-7:]) / 7 if len(data) >= 7 else sum(data) / len(data)
+    def evaluate(self, data):
+        features = compute_features(data)
+        votes = []
+        decision_score = 0
 
-    if short > long:
-        return "BUY"
-    elif short < long:
-        return "SELL"
-    return "HOLD"
+        for agent in self.population:
+            v = agent.vote(features)
+            votes.append((agent, v))
+            decision_score += v
 
-# =========================================================
-# RISK ENGINE
-# =========================================================
+        decision = "HOLD"
+        if decision_score > 1:
+            decision = "BUY"
+        elif decision_score < -1:
+            decision = "SELL"
 
-def risk_adjust(signal, balance):
-    if signal == "BUY" and balance < 100:
-        return "HOLD (LOW BALANCE)"
-    return signal
+        return decision, votes, features
 
-# =========================================================
-# BACKTEST ENGINE
-# =========================================================
+    def assign_fitness(self, market_return):
+        # reward correct directional bias
+        for agent in self.population:
+            agent.fitness *= (1 + market_return * random.uniform(0.8, 1.2))
 
-def backtest(data):
-    balance = 1000
-    position = 0
+    def cull(self):
+        self.population.sort(key=lambda a: a.fitness, reverse=True)
+        self.population = self.population[:4]  # survival pressure
 
-    for i in range(10, len(data)):
-        window = data[:i]
-        signal = simple_signal(window)
+    def reproduce(self):
+        if len(self.population) < 6:
+            parent = random.choice(self.population)
+            self.population.append(parent.mutate())
 
-        if signal == "BUY":
-            position += balance * 0.1
-            balance -= balance * 0.1
-
-        elif signal == "SELL" and position > 0:
-            balance += position * 1.02
-            position = 0
-
-    return balance + position
-
-# =========================================================
-# PLUGINS LAYER (FUTURE AI AGENTS)
-# =========================================================
-
-def plugin_news_sentiment():
-    return random.uniform(-1, 1)
-
-def plugin_volatility():
-    return random.uniform(0, 1)
+    def evolve(self, market_return):
+        self.assign_fitness(market_return)
+        self.cull()
+        self.reproduce()
 
 # =========================================================
-# UI LAYOUT
+# MAIN SAI V3 ENGINE
 # =========================================================
 
-col1, col2, col3 = st.columns(3)
+engine = EvolutionEngine()
 
-market_data = generate_market_data()
+def sai_v3_step(data):
+    decision, votes, features = engine.evaluate(data)
 
-signal = simple_signal(market_data)
-signal = risk_adjust(signal, 500)
+    # fake market reward signal (replace with real PnL later)
+    market_return = random.uniform(-0.05, 0.05)
 
-col1.metric("📊 Signal", signal)
-col2.metric("💰 Sim Balance", "$500")
-col3.metric("📉 Volatility", round(plugin_volatility(), 2))
+    engine.evolve(market_return)
 
-st.divider()
-
-# =========================================================
-# MARKET VIEW
-# =========================================================
-
-st.subheader("📈 Market Simulation")
-st.line_chart(market_data)
-
-# =========================================================
-# BACKTEST SECTION
-# =========================================================
-
-st.subheader("🧪 Backtest Engine")
-
-if st.button("Run Backtest"):
-    result = backtest(market_data)
-    st.success(f"Backtest Final Value: ${round(result, 2)}")
-
-    memory["logs"].append({
-        "id": str(uuid.uuid4()),
-        "time": str(datetime.now()),
-        "result": result
-    })
-    save_memory(memory)
-
-# =========================================================
-# STRATEGY REGISTRY
-# =========================================================
-
-st.subheader("🧠 Strategy Memory")
-
-if st.button("Save Current Strategy"):
-    memory["strategies"].append({
-        "id": str(uuid.uuid4()),
-        "created": str(datetime.now()),
-        "type": "simple_ma_cross",
-        "notes": "auto-saved strategy snapshot"
-    })
-    save_memory(memory)
-    st.info("Strategy saved into Sai memory.")
-
-st.json(memory["strategies"][-5:])
-
-# =========================================================
-# TRADING LOG VIEW
-# =========================================================
-
-st.subheader("📜 System Logs")
-
-st.json(memory["logs"][-5:])
-
-# =========================================================
-# FUTURE EXPANSION HOOK
-# =========================================================
-
-st.divider()
-st.caption("SAI CORE V1 | Ready for multi-agent evolution, live data feeds, and reinforcement learning upgrades")
+    return {
+        "decision": decision,
+        "votes": {a.name: round(v, 3) for a, v in votes},
+        "features": features,
+        "population_size": len(engine.population)
+    }
