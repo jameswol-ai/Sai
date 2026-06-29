@@ -23,7 +23,8 @@ except Exception:
 # --- Utility metrics ---
 def compute_metrics(actual, predicted):
     actual, predicted = np.array(actual, float), np.array(predicted, float)
-    if actual.size == 0 or predicted.size == 0: return {"RMSE": None, "MAPE": None}
+    if actual.size == 0 or predicted.size == 0:
+        return {"RMSE": None, "MAPE": None}
     n = min(len(actual), len(predicted))
     actual, predicted = actual[-n:], predicted[:n]
     rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
@@ -33,10 +34,12 @@ def compute_metrics(actual, predicted):
 
 # --- Bot stubs ---
 def run_bot():
-    return {"time": datetime.now().strftime("%H:%M:%S"),
-            "trade": random.choice(["BUY","SELL"]),
-            "symbol": random.choice(["USD","EUR","GBP","JPY","UGX","KES","TZS","RWF","SSP"]),
-            "amount": random.randint(100,5000)}
+    return {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "trade": random.choice(["BUY","SELL"]),
+        "symbol": random.choice(["USD","EUR","GBP","JPY","UGX","KES","TZS","RWF","SSP"]),
+        "amount": random.randint(100,5000)
+    }
 
 def load_model(file_obj): return pickle.load(file_obj)
 def test_model(model): return {"predictions":[1,0,1,1,0],"accuracy":0.8}
@@ -48,7 +51,7 @@ handler = RotatingFileHandler("sai_app.log", maxBytes=2_000_000, backupCount=3)
 handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 if not logger.handlers: logger.addHandler(handler)
 
-# --- Session state ---
+# --- Session state defaults ---
 defaults = {
     "bot_thread":None,"bot_running":False,"logs":[],"rates":{},
     "history":pd.DataFrame(columns=["Time","Currency","Rate","Forecast"]),
@@ -105,8 +108,12 @@ def sample_currency_rates():
     return {cur:round(random.uniform(0.5,1500),2) for cur in
             ["USD","EUR","GBP","JPY","UGX","KES","TZS","RWF","SSP"]}
 
-def fetch_currency_data(): st.session_state.rates=sample_currency_rates(); return st.session_state.rates
-def forecast_rates(rates): return {cur:round(val*(1+random.uniform(-0.05,0.05)),2) for cur,val in rates.items()}
+def fetch_currency_data():
+    st.session_state.rates=sample_currency_rates()
+    return st.session_state.rates
+
+def forecast_rates(rates):
+    return {cur:round(val*(1+random.uniform(-0.05,0.05)),2) for cur,val in rates.items()}
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="SAI Trading Bot", layout="wide")
@@ -122,13 +129,14 @@ with tabs[0]:
     if st.sidebar.button("Stop Bot"): stop_bot()
     st.sidebar.checkbox("Auto Refresh", key="auto_refresh")
     st.sidebar.slider("Refresh Interval (sec)",1,10,st.session_state.refresh_interval,key="refresh_interval")
-    # ✅ Fixed auto-refresh
     if st.session_state.auto_refresh:
         st.experimental_autorefresh(interval=st.session_state.refresh_interval * 1000)
     drain_bot_queue()
     if not st.session_state.history.empty:
-        st.subheader("Recent Trades"); st.dataframe(st.session_state.history.tail(20))
-        st.subheader("Trade Counts by Symbol"); st.bar_chart(st.session_state.history["Currency"].value_counts())
+        st.subheader("Recent Trades")
+        st.dataframe(st.session_state.history.tail(20))
+        st.subheader("Trade Counts by Symbol")
+        st.bar_chart(st.session_state.history["Currency"].value_counts())
 
 # --- Weekly Forecast Tab ---
 with tabs[5]:
@@ -149,7 +157,9 @@ with tabs[6]:
             prophet_ci_low=[p*0.95 for p in prophet_pred]; prophet_ci_high=[p*1.05 for p in prophet_pred]
             results[cur]={"ARIMA":arima_pred,"Prophet":prophet_pred,
                           "Prophet_low":prophet_ci_low,"Prophet_high":prophet_ci_high}
-        except Exception as e: st.error(f"{cur} forecast error: {e}"); logger.exception("Forecast error for %s",cur)
+        except Exception as e:
+            st.error(f"{cur} forecast error: {e}")
+            logger.exception("Forecast error for %s",cur)
 
     if results:
         fig,ax=plt.subplots(figsize=(12,6))
@@ -157,12 +167,14 @@ with tabs[6]:
             ax.plot(range(steps),preds["ARIMA"],marker="o",label=f"{cur} ARIMA")
             ax.plot(range(steps),preds["Prophet"],marker="x",linestyle="--",label=f"{cur} Prophet")
             ax.fill_between(range(steps),preds["Prophet_low"],preds["Prophet_high"],alpha=0.2)
-        ax.set_title("7-Day Multi-Currency Forecasts"); ax.set_xlabel("Days Ahead"); ax.set_ylabel("Rate")
-        ax.legend(loc="upper left",bbox_to_anchor=(1.02,1)); plt.tight_layout(); st.pyplot(fig)
+        ax.set_title("7-Day Multi-Currency Forecasts")
+        ax.set_xlabel("Days Ahead"); ax.set_ylabel("Rate")
+        ax.legend(loc="upper left",bbox_to_anchor=(1.02,1))
+        plt.tight_layout(); st.pyplot(fig)
 
         metrics_rows=[]
         for cur,preds in results.items():
             actual_vals=st.session_state.history[st.session_state.history["Currency"]==cur]["Rate"].values[-steps:]
             if len(actual_vals)>=steps:
-                metrics_rows.append({"Currency":cur,"Model":"ARIMA",**compute_metrics(actual_vals,preds["ARIMA"][:steps])})
-                metrics_rows.append({"Currency":cur,"Model":"Prophet",**compute_metrics(actual_vals,preds["Prophet"][:steps
+                metrics_rows.append({"Currency":cur,"Model":"ARIMA",
+                                     **compute_metrics(actual_vals,preds["ARIMA"][:steps])
