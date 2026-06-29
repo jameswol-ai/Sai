@@ -25,3 +25,6 @@ prometheus-client>=0.20.0
 statsmodels>=0.14.0
 pmdarima>=2.0.0   # for auto-ARIMA
 prophet>=1.1.0    # for Prophet
+
+statsmodels>=0.14.0
+pmdarima>=2.0.0   # optional for auto-ARIMA
