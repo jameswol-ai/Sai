@@ -181,6 +181,4 @@ with tabs[6]:
                     "Model":"ARIMA",
                     **compute_metrics(actual_vals,preds["ARIMA"][:steps])
                 })
-                metrics_rows.append({
-                    "Currency":cur,
-                    "Model":"Prop
+                
