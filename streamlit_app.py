@@ -35,7 +35,7 @@ def compute_metrics(actual, predicted):
 def run_bot():
     return {"time": datetime.now().strftime("%H:%M:%S"),
             "trade": random.choice(["BUY","SELL"]),
-            "symbol": random.choice(["USD","EUR","GBP","JPY","UGX"]),
+            "symbol": random.choice(["USD","EUR","GBP","JPY","UGX","KES","TZS","RWF","SSP"]),
             "amount": random.randint(100,5000)}
 
 def load_model(file_obj): return pickle.load(file_obj)
@@ -128,22 +128,21 @@ with tabs[0]:
 
 # --- Weekly Forecast Tab ---
 with tabs[5]:
-    st.header("Weekly Forecast")
+    st.header("Weekly Forecast (East African Currencies)")
     rates=fetch_currency_data(); forecast=forecast_rates(rates)
-    update_rows=[{"Currency":cur,"Rate":rates[cur],"Forecast":forecast[cur]} for cur in rates]
-    st.table(pd.DataFrame(update_rows))
+    rows=[{"Currency":cur,"Rate":rates[cur],"Forecast":forecast[cur]} for cur in rates]
+    df=pd.DataFrame(rows)
+    st.table(df)
 
 # --- Multi-Currency Forecasts Tab ---
 with tabs[6]:
-    st.header("Multi-Currency Forecasts")
-    currencies=list(st.session_state.rates.keys()) or ["USD","EUR","GBP"]
+    st.header("Multi-Currency Forecasts (with Confidence Intervals)")
+    currencies=list(st.session_state.rates.keys()) or ["USD","EUR","UGX","KES","TZS","RWF","SSP"]
     steps=7; results={}
     for cur in currencies:
         try:
             arima_pred=[round(st.session_state.rates.get(cur,1)*(1+random.uniform(-0.02,0.02)),2) for _ in range(steps)]
-            prophet_df=pd.DataFrame({"ds":pd.date_range(datetime.now(),periods=steps,freq="D"),
-                                     "y":[st.session_state.rates.get(cur,1)]*steps})
-            prophet_pred=[round(val*(1+random.uniform(-0.03,0.03)),2) for val in prophet_df["y"]]
+            prophet_pred=[round(st.session_state.rates.get(cur,1)*(1+random.uniform(-0.03,0.03)),2) for _ in range(steps)]
             prophet_ci_low=[p*0.95 for p in prophet_pred]; prophet_ci_high=[p*1.05 for p in prophet_pred]
             results[cur]={"ARIMA":arima_pred,"Prophet":prophet_pred,
                           "Prophet_low":prophet_ci_low,"Prophet_high":prophet_ci_high}
@@ -165,4 +164,4 @@ with tabs[6]:
                 metrics_rows.append({"Currency":cur,"Model":"ARIMA",**compute_metrics(actual_vals,preds["ARIMA"][:steps])})
                 metrics_rows.append({"Currency":cur,"Model":"Prophet",**compute_metrics(actual_vals,preds["Prophet"][:steps])})
         if metrics_rows:
-            df
+            df_metrics
