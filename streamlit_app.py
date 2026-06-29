@@ -14,8 +14,6 @@ import queue
 import numpy as np
 import requests
 
-from plotly.subplots import make_subplots
-
 # -------------------- Custom CSS (unchanged) --------------------
 st.markdown("""
 <style>
