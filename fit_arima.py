@@ -54,3 +54,29 @@ def forecast_next(arima_model: Dict[str, Any], steps: int = 1) -> List[float]:
     std = arima_model["std"]
     rng = np.random.default_rng(42)   # local, isolated seed
     return [last + rng.normal(0, std * 0.02) for _ in range(steps)]
+
+def fit_auto_arima(series: pd.Series) -> Dict[str, Any]:
+    """
+    Auto-ARIMA using pmdarima. Falls back to fit_arima if not installed.
+    """
+    try:
+        import pmdarima as pm
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = pm.auto_arima(
+                series, seasonal=False, trace=False,
+                error_action='ignore', suppress_warnings=True,
+                stepwise=True
+            )
+        return {
+            "last_value": series.iloc[-1],
+            "std": series.std(),
+            "fitted": True,
+            "model": model,
+            "order": model.order
+        }
+    except ImportError:
+        return fit_arima(series)   # fixed-order fallback
+    except Exception as e:
+        logger.warning(f"Auto-ARIMA failed ({e}), using fixed order fallback.")
+        return fit_arima(series)
