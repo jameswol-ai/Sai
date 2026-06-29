@@ -49,11 +49,13 @@ handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)
 if not logger.handlers: logger.addHandler(handler)
 
 # --- Session state ---
-for key, default in {
+defaults = {
     "bot_thread":None,"bot_running":False,"logs":[],"rates":{},
     "history":pd.DataFrame(columns=["Time","Currency","Rate","Forecast"]),
     "bot_queue":queue.Queue(),"bot_lock":threading.Lock(),
-    "auto_refresh":False,"refresh_interval":3}.items():
+    "auto_refresh":False,"refresh_interval":3
+}
+for key, default in defaults.items():
     if key not in st.session_state: st.session_state[key]=default
 
 HISTORY_MAX_ROWS=500
@@ -131,8 +133,7 @@ with tabs[5]:
     st.header("Weekly Forecast (East African Currencies)")
     rates=fetch_currency_data(); forecast=forecast_rates(rates)
     rows=[{"Currency":cur,"Rate":rates[cur],"Forecast":forecast[cur]} for cur in rates]
-    df=pd.DataFrame(rows)
-    st.table(df)
+    st.table(pd.DataFrame(rows))
 
 # --- Multi-Currency Forecasts Tab ---
 with tabs[6]:
@@ -164,4 +165,5 @@ with tabs[6]:
                 metrics_rows.append({"Currency":cur,"Model":"ARIMA",**compute_metrics(actual_vals,preds["ARIMA"][:steps])})
                 metrics_rows.append({"Currency":cur,"Model":"Prophet",**compute_metrics(actual_vals,preds["Prophet"][:steps])})
         if metrics_rows:
-            df_metrics
+            df_metrics=pd.DataFrame(metrics_rows)
+            df
