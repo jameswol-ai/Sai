@@ -1,3 +1,4 @@
+# sai/streamlit_app.py
 import streamlit as st
 import threading
 import time
@@ -7,621 +8,367 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import random
 import pickle
-from datetime import datetime, timedelta
+from datetime import datetime
 import queue
+import traceback
 import numpy as np
-import requests
-import os
-
-# -------------------- Custom CSS for modern forex dashboard --------------------
-st.markdown("""
-<style>
-    .main { background-color: #0E1117; }
-    .stApp { background-color: #0E1117; }
-    .css-1d391kg { background-color: #0E1117; }
-    div[data-testid="stMetricValue"] {
-        font-size: 1.8rem; font-weight: 700; color: #FFFFFF;
-    }
-    div[data-testid="stMetricLabel"] {
-        font-size: 0.9rem; color: #AAAAAA;
-    }
-    .forex-card {
-        background: linear-gradient(135deg, #1E1E2F 0%, #252540 100%);
-        border-radius: 16px; padding: 20px; margin: 8px 0;
-        border: 1px solid rgba(255,255,255,0.1);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-        transition: all 0.3s ease;
-    }
-    .forex-card:hover {
-        border-color: #00F2FE;
-        box-shadow: 0 4px 20px rgba(0,242,254,0.3);
-    }
-    .currency-pair {
-        font-size: 1.3rem; font-weight: 600; color: #E0E0E0; margin-bottom: 8px;
-    }
-    .rate-value {
-        font-size: 2rem; font-weight: 700; color: #FFFFFF;
-    }
-    .change-positive {
-        color: #00C853; font-weight: 600;
-    }
-    .change-negative {
-        color: #FF1744; font-weight: 600;
-    }
-    .section-title {
-        font-size: 1.5rem; font-weight: 700; color: #FFFFFF;
-        margin: 20px 0 10px 0; border-bottom: 2px solid #00F2FE;
-        padding-bottom: 5px; display: inline-block;
-    }
-    .stButton > button {
-        background: linear-gradient(90deg, #00F2FE 0%, #4FACFE 100%);
-        color: black; font-weight: 600; border: none;
-        border-radius: 8px; padding: 10px 20px; transition: 0.3s;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,242,254,0.5);
-    }
-    .trade-signal-buy { background-color: #00C853; color: black; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
-    .trade-signal-sell { background-color: #FF1744; color: white; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
-    .trade-signal-hold { background-color: #FFD600; color: black; padding: 4px 12px; border-radius: 12px; font-weight: bold; }
-</style>
-""", unsafe_allow_html=True)
-
-# -------------------- Safe stub models (real plugins can override) --------------------
-def fit_arima(series, order=(2,1,2)):
-    return {"last_value": series.iloc[-1], "std": series.std()}
-
-def forecast_next(arima_model, steps=1):
-    last = arima_model["last_value"]
-    std = arima_model["std"]
-    np.random.seed(42)
-    return [last + np.random.normal(0, std*0.02) for _ in range(steps)]
-
+# --- Forecast plugin imports (ensure these modules exist in sai/plugins) ---
+try:
+from plugins.arima_forecast import fit_arima, forecast_next
+except Exception:
+# safe stubs if plugin missing
+def fit_arima(series, order=(2, 1, 2)):
+raise RuntimeError("ARIMA plugin not available")
+def forecast_next(model_fit, steps=1):
+raise RuntimeError("ARIMA plugin not available")
+try:
+from plugins.prophet_forecast import fit_prophet, forecast_future
+except Exception:
 def fit_prophet(df_rates):
-    df = df_rates.copy()
-    df["ds_num"] = (df["ds"] - df["ds"].min()).dt.total_seconds() / 86400
-    if len(df) > 1:
-        slope = np.polyfit(df["ds_num"], df["y"], 1)[0]
-    else:
-        slope = 0
-    return {"last_date": df["ds"].max(), "slope": slope, "last_y": df["y"].iloc[-1]}
-
-def forecast_future(prophet_model, periods=1, freq="D"):
-    last_date = prophet_model["last_date"]
-    slope = prophet_model["slope"]
-    last_y = prophet_model["last_y"]
-    dates = [last_date + timedelta(days=i+1) for i in range(periods)]
-    values = [last_y + slope * (i+1) for i in range(periods)]
-    return pd.DataFrame({"ds": dates, "yhat": values})
-
-# -------------------- Utility metrics --------------------
+raise RuntimeError("Prophet plugin not available")
+def forecast_future(model, periods=1, freq="D"):
+raise RuntimeError("Prophet plugin not available")
+# --- Utility metrics ---
 def compute_metrics(actual, predicted):
-    actual = np.array(actual, dtype=float)
-    predicted = np.array(predicted, dtype=float)
-    if actual.size == 0 or predicted.size == 0:
-        return {"RMSE": None, "MAPE": None}
-    n = min(len(actual), len(predicted))
-    actual = actual[-n:]
-    predicted = predicted[:n]
-    rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
-    denom = np.where(actual == 0, 1e-8, actual)
-    mape = float(np.mean(np.abs((actual - predicted) / denom)) * 100)
-    return {"RMSE": round(rmse, 6), "MAPE": round(mape, 4)}
-
-# -------------------- Bot simulation --------------------
+"""Compute RMSE and MAPE between actual and predicted arrays."""
+actual = np.array(actual, dtype=float)
+predicted = np.array(predicted, dtype=float)
+if actual.size == 0 or predicted.size == 0:
+return {"RMSE": None, "MAPE": None}
+# align lengths
+n = min(len(actual), len(predicted))
+actual = actual[-n:]
+predicted = predicted[:n]
+rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
+# avoid division by zero in MAPE
+denom = np.where(actual == 0, 1e-8, actual)
+mape = float(np.mean(np.abs((actual - predicted) / denom)) * 100)
+return {"RMSE": round(rmse, 6), "MAPE": round(mape, 4)}
+# --- Safe stubs (replace with real implementations later) ---
 def run_bot():
-    return {
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "trade": random.choice(["BUY", "SELL"]),
-        "symbol": random.choice(["USD", "EUR", "GBP", "JPY", "UGX", "KES", "TZS", "RWF", "BIF", "SSP", "ETB"]),
-        "amount": random.randint(100, 5000)
-    }
-
+"""Simulate a trading decision from a bot."""
+return {
+"time": datetime.now().strftime("%H:%M:%S"),
+"trade": random.choice(["BUY", "SELL"]),
+"symbol": random.choice(["USD", "EUR", "GBP", "JPY", "UGX"]),
+"amount": random.randint(100, 5000)
+}
 def load_model(file_obj):
-    try:
-        return pickle.load(file_obj)
-    except Exception as e:
-        st.warning(f"Model could not be loaded safely: {e}")
-        return None
-
+"""Load a pickled model safely."""
+return pickle.load(file_obj)
 def test_model(model):
-    if model is None:
-        return {"predictions": [], "accuracy": 0}
-    return {"predictions": [1, 0, 1, 1, 0], "accuracy": 0.8}
-
-# -------------------- Logging --------------------
+"""Run a quick smoke test on the model."""
+return {"predictions": [1, 0, 1, 1, 0], "accuracy": 0.8}
+# --- Logging configuration with rotation ---
 logger = logging.getLogger("sai_app")
 logger.setLevel(logging.INFO)
 handler = RotatingFileHandler("sai_app.log", maxBytes=2_000_000, backupCount=3)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 handler.setFormatter(formatter)
 if not logger.handlers:
-    logger.addHandler(handler)
-
-# -------------------- Session state init --------------------
+logger.addHandler(handler)
+# --- Session state initialization ---
 if "bot_thread" not in st.session_state:
-    st.session_state.bot_thread = None
+st.session_state.bot_thread = None
 if "bot_running" not in st.session_state:
-    st.session_state.bot_running = False
+st.session_state.bot_running = False
 if "logs" not in st.session_state:
-    st.session_state.logs = []
+st.session_state.logs = []
 if "rates" not in st.session_state:
-    st.session_state.rates = {}
-if "prev_rates" not in st.session_state:
-    st.session_state.prev_rates = {}
+st.session_state.rates = {}
 if "history" not in st.session_state:
-    st.session_state.history = pd.DataFrame(columns=["Time", "Currency", "Rate", "Forecast"])
+st.session_state.history = pd.DataFrame(columns=["Time", "Currency", "Rate", "Forecast"])
 if "bot_queue" not in st.session_state:
-    st.session_state.bot_queue = queue.Queue()
-if "stop_event" not in st.session_state:
-    st.session_state.stop_event = threading.Event()
+st.session_state.bot_queue = queue.Queue()
+if "bot_lock" not in st.session_state:
+st.session_state.bot_lock = threading.Lock()
 if "auto_refresh" not in st.session_state:
-    st.session_state.auto_refresh = False
+st.session_state.auto_refresh = False
 if "refresh_interval" not in st.session_state:
-    st.session_state.refresh_interval = 3
-if "use_real_data" not in st.session_state:
-    st.session_state.use_real_data = False
-
-HISTORY_MAX_ROWS = 1000
-
-# -------------------- Bot thread management --------------------
+st.session_state.refresh_interval = 3# seconds
+HISTORY_MAX_ROWS = 500
+# --- Bot thread management using queue for safe cross-thread comms ---
 def bot_loop(queue_obj, stop_event):
-    logger.info("Bot thread started.")
-    while not stop_event.is_set():
-        try:
-            trade_info = run_bot()
-            queue_obj.put(trade_info)
-        except Exception as e:
-            queue_obj.put({
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "error": str(e)
-            })
-            logger.exception("Bot loop error")
-            break
-        time.sleep(2)
-    logger.info("Bot thread exited.")
-
+logger.info("Bot thread started.")
+try:
+while not stop_event.is_set():
+try:
+trade_info = run_bot()
+queue_obj.put(trade_info)
+logger.debug("Bot produced: %s", trade_info)
+except Exception as e:
+err = {"time": datetime.now().strftime("%H:%M:%S"), "error": str(e), "trace": traceback.format_exc()}
+queue_obj.put(err)
+logger.exception("Exception in bot loop")
+break
+time.sleep(2)
+finally:
+logger.info("Bot thread exiting.")
 def start_bot():
-    if st.session_state.bot_running:
-        return
-    stop_event = threading.Event()
-    st.session_state.stop_event = stop_event
-    t = threading.Thread(target=bot_loop, args=(st.session_state.bot_queue, stop_event), daemon=True)
-    st.session_state.bot_thread = t
-    st.session_state.bot_running = True
-    t.start()
-
+if st.session_state.bot_running:
+return
+stop_event = threading.Event()
+st.session_state.stop_event = stop_event
+t = threading.Thread(target=bot_loop, args=(st.session_state.bot_queue, stop_event), daemon=True)
+st.session_state.bot_thread = t
+st.session_state.bot_running = True
+t.start()
+logger.info("Bot start requested.")
 def stop_bot():
-    if st.session_state.bot_running:
-        st.session_state.stop_event.set()
-        st.session_state.bot_running = False
-
-def drain_bot_queue(max_items=50):
-    drained = 0
-    while not st.session_state.bot_queue.empty() and drained < max_items:
-        try:
-            item = st.session_state.bot_queue.get_nowait()
-        except queue.Empty:
-            break
-        st.session_state.logs.append(item)
-        drained += 1
-    if len(st.session_state.logs) > 1000:
-        st.session_state.logs = st.session_state.logs[-1000:]
-    return drained
-
-# -------------------- East African currencies (including SSP) --------------------
-EAST_AFRICAN_CURRENCIES = ["UGX", "KES", "TZS", "RWF", "BIF", "SSP", "ETB"]
-OTHER_CURRENCIES = ["USD", "EUR", "GBP", "JPY"]
-ALL_CURRENCIES = EAST_AFRICAN_CURRENCIES + OTHER_CURRENCIES
-
-# -------------------- Real exchange rate fetcher (Frankfurter API) --------------------
-@st.cache_data(ttl=60)
-def get_real_rates():
-    try:
-        url = "https://api.frankfurter.app/latest?from=USD&to=" + ",".join(ALL_CURRENCIES)
-        resp = requests.get(url, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        rates = data["rates"]
-        rates["USD"] = 1.0
-        return rates
-    except Exception as e:
-        logger.error(f"Failed to fetch real rates: {e}")
-        return None
-
+if not st.session_state.bot_running:
+return
+try:
+st.session_state.stop_event.set()
+except Exception:
+logger.exception("Error setting stop event")
+st.session_state.bot_running = False
+logger.info("Bot stop requested.")
+def drain_bot_queue():
+"""Move all items from the bot queue into session_state.logs and history where appropriate."""
+drained = 0
+while not st.session_state.bot_queue.empty():
+try:
+item = st.session_state.bot_queue.get_nowait()
+except queue.Empty:
+break
+drained += 1
+st.session_state.logs.append(item)
+if len(st.session_state.logs) > 1000:
+st.session_state.logs = st.session_state.logs[-1000:]
+if drained:
+logger.info("Drained %d items from bot queue.", drained)
+return drained
+# --- Currency & Forecast Helpers ---
+@st.cache_data(ttl=2)
 def sample_currency_rates():
-    ranges = {
-        "UGX": (3700, 3900), "KES": (125, 140), "TZS": (2500, 2700),
-        "RWF": (1300, 1500), "BIF": (2800, 3000), "SSP": (1500, 1800),
-        "ETB": (55, 60), "USD": (1, 1), "EUR": (0.9, 1.1),
-        "GBP": (0.75, 0.85), "JPY": (140, 150)
-    }
-    rates = {}
-    for cur in ALL_CURRENCIES:
-        low, high = ranges.get(cur, (100, 5000))
-        rates[cur] = round(random.uniform(low, high), 2)
-    return rates
-
+currencies = ["USD", "EUR", "GBP", "JPY", "UGX", "KES", "TZS", "RWF", "SSP"]
+rates = {cur: round(random.uniform(0.5, 1500), 2) for cur in currencies}
+return rates
 def fetch_currency_data():
-    real = get_real_rates()
-    if real:
-        rates = real
-        st.session_state.use_real_data = True
-    else:
-        rates = sample_currency_rates()
-        st.session_state.use_real_data = False
-
-    prev = st.session_state.prev_rates if st.session_state.prev_rates else {}
-    delta = {}
-    for cur in EAST_AFRICAN_CURRENCIES:
-        if cur in prev and prev[cur] != 0:
-            delta[cur] = ((rates[cur] - prev[cur]) / prev[cur]) * 100
-        else:
-            delta[cur] = None
-
-    st.session_state.prev_rates = rates.copy()
-    st.session_state.rates = rates
-    return rates, delta
-
+rates = sample_currency_rates()
+st.session_state.rates = rates
+return rates
 def forecast_rates(rates):
-    return {cur: round(val * (1 + random.uniform(-0.02, 0.02)), 2) for cur, val in rates.items()}
-
+forecast = {cur: round(val * (1 + random.uniform(-0.05, 0.05)), 2) for cur, val in rates.items()}
+return forecast
 def update_history(rates, forecast):
-    now = datetime.now()
-    rows = []
-    for cur in rates.keys():
-        rows.append({
-            "Time": now.isoformat(),
-            "Currency": cur,
-            "Rate": rates[cur],
-            "Forecast": forecast[cur]
-        })
-    if rows:
-        st.session_state.history = pd.concat(
-            [st.session_state.history, pd.DataFrame(rows)], ignore_index=True
-        )
-        if len(st.session_state.history) > HISTORY_MAX_ROWS:
-            st.session_state.history = st.session_state.history.iloc[-HISTORY_MAX_ROWS:].reset_index(drop=True)
-
-def generate_trade_signal(current_rate, forecast_value, threshold=0.01):
-    change_pct = (forecast_value - current_rate) / current_rate
-    if change_pct > threshold:
-        return "BUY"
-    elif change_pct < -threshold:
-        return "SELL"
-    else:
-        return "HOLD"
-
-# -------------------- Forecast function (with fallback for low data) --------------------
-def run_forecast(currency, horizon, steps, freq="D"):
-    df_all = st.session_state.history.copy()
-    df_all["Time_dt"] = pd.to_datetime(df_all["Time"])
-    df_cur = df_all[df_all["Currency"] == currency].sort_values("Time_dt")
-
-    # Fallback when not enough historical data
-    if len(df_cur) < 20:
-        # Use current rate from session state if available, else fallback to 1.0
-        current_rate = st.session_state.rates.get(currency, 1.0)
-        fallback_preds = [round(current_rate * (1 + random.uniform(-0.01, 0.01)), 2) for _ in range(steps)]
-        return {
-            "currency": currency,
-            "current_rate": current_rate,
-            "arima_forecast": fallback_preds[0],
-            "prophet_forecast": None,
-            "arima_signal": "HOLD",
-            "prophet_signal": None,
-            "arima_all_preds": fallback_preds,
-            "prophet_all_preds": None,
-            "arima_metrics": {"RMSE": None, "MAPE": None},
-            "prophet_metrics": None,
-            "actual_test": [],
-            "train": df_cur,
-            "test": pd.DataFrame(),
-            "warning": "Insufficient history – forecast is a rough estimate only."
-        }
-
-    train = df_cur.iloc[:-steps] if steps < len(df_cur) else df_cur.iloc[:-1]
-    test = df_cur.iloc[-steps:] if steps < len(df_cur) else df_cur.iloc[-1:]
-    actual_test = test["Rate"].values
-
-    arima_pred = None
-    arima_metrics = None
-    try:
-        arima_model = fit_arima(train["Rate"], order=(2,1,2))
-        arima_pred = forecast_next(arima_model, steps=steps)
-        arima_metrics = compute_metrics(actual_test, arima_pred[:len(actual_test)])
-    except Exception:
-        pass
-
-    prophet_pred = None
-    prophet_metrics = None
-    try:
-        df_prophet = pd.DataFrame({"ds": train["Time_dt"], "y": train["Rate"].astype(float)})
-        prophet_model = fit_prophet(df_prophet)
-        forecast_df = forecast_future(prophet_model, periods=steps, freq=freq)
-        prophet_pred = forecast_df["yhat"].tolist()
-        prophet_metrics = compute_metrics(actual_test, prophet_pred[:len(actual_test)])
-    except Exception:
-        pass
-
-    current_rate = df_cur["Rate"].iloc[-1]
-    arima_signal = generate_trade_signal(current_rate, arima_pred[0]) if arima_pred else None
-    prophet_signal = generate_trade_signal(current_rate, prophet_pred[0]) if prophet_pred else None
-
-    return {
-        "currency": currency,
-        "current_rate": current_rate,
-        "arima_forecast": arima_pred[0] if arima_pred else None,
-        "prophet_forecast": prophet_pred[0] if prophet_pred else None,
-        "arima_signal": arima_signal,
-        "prophet_signal": prophet_signal,
-        "arima_all_preds": arima_pred,
-        "prophet_all_preds": prophet_pred,
-        "arima_metrics": arima_metrics,
-        "prophet_metrics": prophet_metrics,
-        "actual_test": actual_test,
-        "train": train,
-        "test": test,
-        "warning": None
-    }
-
-# -------------------- Streamlit UI --------------------
-st.set_page_config(page_title="SAI Forex Bot - East Africa", layout="wide")
-
-# ----- Top bar -----
-col_title, col_status = st.columns([3, 1])
-with col_title:
-    st.markdown("<h1 style='color:#00F2FE;'>📈 SAI Forex Trading Bot</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#AAAAAA; font-size:1.1rem;'>East African Currency Trading & Forecasting – UGX, KES, TZS, RWF, BIF, SSP, ETB</p>", unsafe_allow_html=True)
-
-with col_status:
-    if st.session_state.use_real_data:
-        st.success("🔴 LIVE")
-    else:
-        st.warning("🟡 SIMULATED")
-
+now = datetime.now().strftime("%H:%M:%S")
+rows = []
+for cur in rates.keys():
+rows.append({"Time": now, "Currency": cur, "Rate": rates[cur], "Forecast": forecast[cur]})
+if rows:
+st.session_state.history = pd.concat([st.session_state.history, pd.DataFrame(rows)], ignore_index=True)
+if len(st.session_state.history) > HISTORY_MAX_ROWS:
+st.session_state.history = st.session_state.history.iloc[-HISTORY_MAX_ROWS:].reset_index(drop=True)
+# --- Streamlit UI ---
+st.set_page_config(page_title="SAI Trading Bot", layout="wide")
+st.title("📈 SAI Trading Bot Dashboard")
 tabs = st.tabs([
-    "📊 Dashboard",
-    "📅 Daily Forecast",
-    "📆 Weekly Forecast",
-    "🗓️ Monthly Forecast",
-    "📈 Trade Recommendations",
-    "⚙️ Strategy Config",
-    "📋 Logs",
-    "🧪 Model Testing",
-    "🛠️ Debug"
+"Dashboard",
+"Strategy Config",
+"Logs",
+"Model Testing",
+"Debug",
+"Weekly Forecast",
+"Multi-Currency Forecasts"
 ])
-
+# Dashboard Tab
 with tabs[0]:
-    st.markdown("<div class='section-title'>🌍 East African Forex Rates (USD Base)</div>", unsafe_allow_html=True)
-
-    rates, deltas = fetch_currency_data()
-    forecast = forecast_rates(rates)
-    update_history(rates, forecast)
-
-    cols = st.columns(4)
-    for i, cur in enumerate(EAST_AFRICAN_CURRENCIES):
-        rate = rates.get(cur, 0)
-        delta_val = deltas.get(cur)
-        if delta_val is not None:
-            delta_str = f"{delta_val:+.2f}%"
-            delta_class = "change-positive" if delta_val >= 0 else "change-negative"
-        else:
-            delta_str = "N/A"
-            delta_class = ""
-        with cols[i % 4]:
-            st.markdown(f"""
-            <div class="forex-card">
-                <div class="currency-pair">USD/{cur}</div>
-                <div class="rate-value">{rate:,.2f}</div>
-                <div class="{delta_class}" style="font-size:1rem;">{delta_str}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} | Live rates refresh every 60s")
-
-    col_ctrl, col_activity = st.columns([1, 2])
-    with col_ctrl:
-        st.markdown("<div class='section-title'>⚡ Bot Controls</div>", unsafe_allow_html=True)
-        start_col, stop_col = st.columns(2)
-        with start_col:
-            if st.button("▶️ Start Bot", disabled=st.session_state.bot_running):
-                start_bot()
-        with stop_col:
-            if st.button("⏹️ Stop Bot", disabled=not st.session_state.bot_running):
-                stop_bot()
-
-        if st.session_state.bot_thread and not st.session_state.bot_thread.is_alive() and st.session_state.bot_running:
-            st.warning("Bot stopped unexpectedly; resetting.")
-            st.session_state.bot_running = False
-
-        auto = st.checkbox("Auto‑refresh (live)", value=st.session_state.auto_refresh)
-        st.session_state.auto_refresh = auto
-        if auto:
-            interval = st.slider("Refresh (sec)", 1, 10, st.session_state.refresh_interval)
-            st.session_state.refresh_interval = interval
-        if st.button("🔄 Refresh Now"):
-            drain_bot_queue(max_items=100)
-            st.rerun()
-
-    with col_activity:
-        st.markdown("<div class='section-title'>🤖 Recent Bot Trades</div>", unsafe_allow_html=True)
-        if st.session_state.logs:
-            df_logs = pd.DataFrame(st.session_state.logs[-10:])
-            st.dataframe(df_logs, use_container_width=True)
-        else:
-            st.info("No trades yet. Start the bot to see activity.")
-
-    if not st.session_state.history.empty:
-        st.markdown("<div class='section-title'>📉 East African Rate Trends</div>", unsafe_allow_html=True)
-        fig2, ax2 = plt.subplots(figsize=(10, 5))
-        df_plot = st.session_state.history.copy()
-        df_plot["Time_dt"] = pd.to_datetime(df_plot["Time"])
-        colors = plt.cm.tab10.colors
-        for idx, cur in enumerate(EAST_AFRICAN_CURRENCIES):
-            cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
-            if not cur_data.empty:
-                ax2.plot(cur_data["Time_dt"], cur_data["Rate"], label=cur, color=colors[idx % len(colors)])
-        ax2.legend(loc="upper left", bbox_to_anchor=(1, 1))
-        ax2.set_title("East African Currencies – Recent Trends", color='white')
-        ax2.set_xlabel("Time", color='white')
-        ax2.set_ylabel("Rate (USD base)", color='white')
-        ax2.tick_params(colors='white')
-        ax2.set_facecolor('#0E1117')
-        fig2.patch.set_facecolor('#0E1117')
-        plt.xticks(rotation=45)
-        st.pyplot(fig2)
-
-# --- Daily Forecast tab ---
+st.header("Live Trading Dashboard")
+col1, col2 = st.columns([1, 1])
+with col1:
+start_col, stop_col = st.columns(2)
+with start_col:
+if st.button("Start Bot", disabled=st.session_state.bot_running):
+start_bot()
+with stop_col:
+if st.button("Stop Bot", disabled=not st.session_state.bot_running):
+stop_bot()
+st.write("**Auto Refresh**")
+auto = st.checkbox("Enable auto refresh", value=st.session_state.auto_refresh)
+st.session_state.auto_refresh = auto
+if auto:
+interval = st.slider("Refresh interval seconds", 1, 10, st.session_state.refresh_interval)
+st.session_state.refresh_interval = interval
+drained = drain_bot_queue()
+# lightweight sleep to allow UI to update if desired
+time.sleep(0.01)
+else:
+if st.button("Refresh Now"):
+drained = drain_bot_queue()
+with col2:
+st.write("💱 Currency Rates")
+rates = fetch_currency_data()
+st.table(pd.DataFrame(rates.items(), columns=["Currency", "Rate"]))
+st.write("📊 Forecasted Rates (simple sample)")
+forecast = forecast_rates(rates)
+st.table(pd.DataFrame(forecast.items(), columns=["Currency", "Forecast"]))
+update_history(rates, forecast)
+# Graph visualization
+fig, ax = plt.subplots(figsize=(8, 4))
+x = list(rates.keys())
+current_vals = list(rates.values())
+forecast_vals = [forecast[k] for k in x]
+width = 0.35
+ax.bar([i - width/2 for i in range(len(x))], current_vals, width=width, alpha=0.7, label="Current")
+ax.bar([i + width/2 for i in range(len(x))], forecast_vals, width=width, alpha=0.7, label="Forecast")
+ax.set_ylabel("Rate")
+ax.set_title("Currency Rates vs Forecast")
+ax.set_xticks(range(len(x)))
+ax.set_xticklabels(x)
+ax.legend()
+st.pyplot(fig)
+# Daily trend graph (subset for readability)
+if not st.session_state.history.empty:
+fig2, ax2 = plt.subplots(figsize=(10, 4))
+currencies_to_plot = list(rates.keys())[:6]
+for cur in currencies_to_plot:
+df_cur = st.session_state.history[st.session_state.history["Currency"] == cur]
+if not df_cur.empty:
+ax2.plot(df_cur["Time"], df_cur["Rate"], label=f"{cur} Rate")
+ax2.plot(df_cur["Time"], df_cur["Forecast"], linestyle="--", label=f"{cur} Forecast")
+ax2.set_title("Recent Currency Trends")
+ax2.set_xlabel("Time")
+ax2.set_ylabel("Value")
+ax2.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+plt.xticks(rotation=45)
+st.pyplot(fig2)
+st.write("Trade Logs (latest 10)")
+try:
+df_logs = pd.DataFrame(st.session_state.logs[-10:])
+st.table(df_logs)
+except Exception:
+st.write(st.session_state.logs[-10:])
+# Strategy Config Tab
 with tabs[1]:
-    st.markdown("<div class='section-title'>📅 Daily Forecast (Next Day)</div>", unsafe_allow_html=True)
-    currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="daily_cur")
-    if st.button("Generate Daily Forecast"):
-        with st.spinner("Forecasting..."):
-            result = run_forecast(currency, "daily", steps=1)
-        if isinstance(result, str):
-            st.error(result)
-        else:
-            if result.get("warning"):
-                st.warning(result["warning"])
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Current Rate", f"{result['current_rate']:.2f}")
-            col2.metric("ARIMA Forecast", f"{result['arima_forecast']:.2f}" if result['arima_forecast'] else "N/A")
-            col3.metric("Prophet Forecast", f"{result['prophet_forecast']:.2f}" if result['prophet_forecast'] else "N/A")
-            st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
-            if result['arima_metrics']:
-                st.caption(f"ARIMA Backtest RMSE: {result['arima_metrics']['RMSE']}, MAPE: {result['arima_metrics']['MAPE']}%")
-            if result['prophet_metrics']:
-                st.caption(f"Prophet Backtest RMSE: {result['prophet_metrics']['RMSE']}, MAPE: {result['prophet_metrics']['MAPE']}%")
-
-# --- Weekly Forecast tab ---
+st.header("Strategy Configuration")
+risk_level = st.slider("Risk Level", 1, 10, 5)
+st.write(f"**Selected Risk Level:** {risk_level}")
+st.write("You can add more strategy parameters here such as stop loss, take profit, position sizing rules, and indicators.")
+# Logs Tab
 with tabs[2]:
-    st.markdown("<div class='section-title'>📆 Weekly Forecast (7 Days)</div>", unsafe_allow_html=True)
-    currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="weekly_cur")
-    if st.button("Generate Weekly Forecast"):
-        with st.spinner("Forecasting 7 days..."):
-            result = run_forecast(currency, "weekly", steps=7)
-        if isinstance(result, str):
-            st.error(result)
-        else:
-            if result.get("warning"):
-                st.warning(result["warning"])
-            fig, ax = plt.subplots()
-            days = list(range(1, 8))
-            if result['arima_all_preds']:
-                ax.plot(days, result['arima_all_preds'], marker='o', label="ARIMA")
-            if result['prophet_all_preds']:
-                ax.plot(days, result['prophet_all_preds'], marker='x', label="Prophet")
-            ax.axhline(y=result['current_rate'], color='gray', linestyle='--', label="Current")
-            ax.set_xticks(days)
-            ax.set_xlabel("Day")
-            ax.set_ylabel("Rate")
-            ax.legend()
-            st.pyplot(fig)
-            st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
-
-# --- Monthly Forecast tab ---
+st.header("Application Logs")
+try:
+with open("sai_app.log", "r") as f:
+log_lines = f.readlines()[-200:]
+st.text("".join(log_lines))
+except FileNotFoundError:
+st.info("No logs yet.")
+except Exception:
+st.error("Unable to read log file. See debug tab for details.")
+logger.exception("Error reading log file")
+# Model Testing Tab
 with tabs[3]:
-    st.markdown("<div class='section-title'>🗓️ Monthly Forecast (30 Days)</div>", unsafe_allow_html=True)
-    currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="monthly_cur")
-    if st.button("Generate Monthly Forecast"):
-        with st.spinner("Forecasting 30 days..."):
-            result = run_forecast(currency, "monthly", steps=30)
-        if isinstance(result, str):
-            st.error(result)
-        else:
-            if result.get("warning"):
-                st.warning(result["warning"])
-            fig, ax = plt.subplots()
-            days = list(range(1, 31))
-            if result['arima_all_preds']:
-                ax.plot(days, result['arima_all_preds'], alpha=0.7, label="ARIMA")
-            if result['prophet_all_preds']:
-                ax.plot(days, result['prophet_all_preds'], alpha=0.7, label="Prophet")
-            ax.axhline(y=result['current_rate'], color='gray', linestyle='--', label="Current")
-            ax.set_xlabel("Day")
-            ax.set_ylabel("Rate")
-            ax.legend()
-            st.pyplot(fig)
-            st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
-
-# --- Trade Recommendations tab ---
+st.header("Model Testing")
+uploaded_model = st.file_uploader("Upload model.pkl", type=["pkl"])
+if uploaded_model:
+try:
+uploaded_model.seek(0)
+model = load_model(uploaded_model)
+st.success("Model loaded successfully.")
+test_results = test_model(model)
+st.write("Test Results:", test_results)
+fig, ax = plt.subplots()
+ax.plot(test_results.get("predictions", []), marker="o", label="Predictions")
+ax.set_title("Model Predictions")
+ax.legend()
+st.pyplot(fig)
+except (pickle.UnpicklingError, EOFError):
+st.error("Uploaded file is not a valid pickle model.")
+logger.exception("Model load error")
+except Exception:
+st.error("An error occurred while loading or testing the model.")
+logger.exception("Unexpected model test error")
+# Debug Tab
 with tabs[4]:
-    st.markdown("<div class='section-title'>📊 Trade Recommendations</div>", unsafe_allow_html=True)
-    horizon = st.radio("Horizon", ["Daily", "Weekly", "Monthly"], horizontal=True)
-    steps_map = {"Daily": 1, "Weekly": 7, "Monthly": 30}
-    steps = steps_map[horizon]
-
-    if st.button("Get Trade Signals for East Africa"):
-        signals = []
-        fallback_used = False
-        with st.spinner("Computing signals..."):
-            for cur in EAST_AFRICAN_CURRENCIES:
-                result = run_forecast(cur, horizon.lower(), steps)
-                if isinstance(result, dict):
-                    if result.get("warning"):
-                        fallback_used = True
-                    signals.append({
-                        "Currency": cur,
-                        "Current Rate": result['current_rate'],
-                        "ARIMA Forecast": result['arima_forecast'],
-                        "ARIMA Signal": result['arima_signal'],
-                        "Prophet Forecast": result['prophet_forecast'],
-                        "Prophet Signal": result['prophet_signal']
-                    })
-        if signals:
-            if fallback_used:
-                st.warning("Some forecasts use a rough estimate because historical data is insufficient. Keep the dashboard running to build history.")
-            df_signals = pd.DataFrame(signals)
-            def highlight_signal(val):
-                if val == 'BUY':
-                    return 'background-color: #00C853; color: black'
-                elif val == 'SELL':
-                    return 'background-color: #FF1744; color: white'
-                return ''
-            st.dataframe(df_signals.style.applymap(highlight_signal, subset=['ARIMA Signal', 'Prophet Signal']), use_container_width=True)
-        else:
-            st.warning("No signals generated.")
-
-# --- Strategy Config tab ---
+st.header("Debug Information")
+st.write("**Session State Keys:**", list(st.session_state.keys()))
+st.write("**Bot Running:**", st.session_state.bot_running)
+st.write("**Queue Size:**", st.session_state.bot_queue.qsize())
+st.write("**History Rows:**", len(st.session_state.history))
+if st.button("Drain Bot Queue (debug)"):
+drained = drain_bot_queue()
+st.write(f"Drained {drained} items from queue.")
+# --- Weekly Forecast Tab ---
 with tabs[5]:
-    st.markdown("<div class='section-title'>⚙️ Strategy Configuration</div>", unsafe_allow_html=True)
-    risk_level = st.slider("Risk Level", 1, 10, 5)
-    st.info("Risk level will be used in future trading logic.")
-
-# --- Logs tab ---
+st.header("Weekly Currency Forecasts")
+if not st.session_state.history.empty:
+currency = st.selectbox("Select Currency", st.session_state.history["Currency"].unique())
+df_cur = st.session_state.history[st.session_state.history["Currency"] == currency]
+if len(df_cur) > 20:
+steps = 7
+# ARIMA forecast
+try:
+arima_fit = fit_arima(df_cur["Rate"], order=(2, 1, 2))
+arima_pred = forecast_next(arima_fit, steps=steps)
+st.subheader(f"{currency} ARIMA 7-Day Forecast")
+st.line_chart(pd.Series(arima_pred, name=f"{currency} ARIMA 7-Day Forecast"))
+except Exception as e:
+st.error(f"ARIMA error: {e}")
+logger.exception("ARIMA error")
+# Prophet forecast
+try:
+df_prophet = pd.DataFrame({"ds": pd.to_datetime(df_cur["Time"]), "y": df_cur["Rate"].astype(float)})
+prophet_model = fit_prophet(df_prophet)
+forecast_df = forecast_future(prophet_model, periods=steps, freq="D")
+st.subheader(f"{currency} Prophet 7-Day Forecast")
+st.line_chart(forecast_df.set_index("ds")[["yhat"]].tail(steps))
+except Exception as e:
+st.error(f"Prophet error: {e}")
+logger.exception("Prophet error")
+# Metrics
+if 'arima_pred' in locals() and 'forecast_df' in locals():
+actual_vals = df_cur["Rate"].values[-steps:]
+arima_metrics = compute_metrics(actual_vals, arima_pred[:len(actual_vals)])
+prophet_metrics = compute_metrics(actual_vals, forecast_df.tail(steps)["yhat"].tolist()[:len(actual_vals)])
+st.subheader("7-Day Forecast Accuracy")
+st.table(pd.DataFrame([arima_metrics, prophet_metrics], index=["ARIMA", "Prophet"]))
+# --- Multi-Currency Weekly Forecast Tab ---
 with tabs[6]:
-    st.markdown("<div class='section-title'>📋 Application Logs</div>", unsafe_allow_html=True)
-    try:
-        with open("sai_app.log", "r") as f:
-            st.text("".join(f.readlines()[-200:]))
-    except FileNotFoundError:
-        st.info("No logs yet.")
-
-# --- Model Testing tab ---
-with tabs[7]:
-    st.markdown("<div class='section-title'>🧪 Model Testing</div>", unsafe_allow_html=True)
-    st.warning("⚠️ Only upload trusted .pkl files.")
-    uploaded_model = st.file_uploader("Upload model.pkl", type=["pkl"])
-    if uploaded_model:
-        uploaded_model.seek(0)
-        model = load_model(uploaded_model)
-        if model:
-            st.success("Model loaded.")
-            test_results = test_model(model)
-            st.write(test_results)
-            fig, ax = plt.subplots()
-            ax.plot(test_results.get("predictions", []), marker="o")
-            st.pyplot(fig)
-
-# --- Debug tab ---
-with tabs[8]:
-    st.markdown("<div class='section-title'>🛠️ Debug</div>", unsafe_allow_html=True)
-    st.json({k: str(v) if not isinstance(v, (dict, list, int, float, bool, type(None))) else v for k, v in st.session_state.items()})
-
-# Auto-refresh logic
-if st.session_state.auto_refresh:
-    drain_bot_queue(max_items=5)
-    time.sleep(st.session_state.refresh_interval)
-    st.rerun()
+st.header("Multi-Currency 7-Day Forecasts")
+if not st.session_state.history.empty:
+currencies = st.multiselect(
+"Select currencies to forecast",
+st.session_state.history["Currency"].unique(),
+default=["USD", "EUR", "UGX"]
+)
+steps = 7
+results = {}
+for cur in currencies:
+df_cur = st.session_state.history[st.session_state.history["Currency"] == cur]
+if len(df_cur) > 20:
+try:
+arima_fit = fit_arima(df_cur["Rate"], order=(2, 1, 2))
+arima_pred = forecast_next(arima_fit, steps=steps)
+df_prophet = pd.DataFrame({"ds": pd.to_datetime(df_cur["Time"]), "y": df_cur["Rate"].astype(float)})
+prophet_model = fit_prophet(df_prophet)
+forecast_df = forecast_future(prophet_model, periods=steps, freq="D")
+prophet_pred = forecast_df.tail(steps)["yhat"].tolist()
+results[cur] = {"ARIMA": arima_pred, "Prophet": prophet_pred}
+except Exception as e:
+st.error(f"{cur} forecast error: {e}")
+logger.exception("Forecast error for %s", cur)
+if results:
+# Plot all currencies together
+fig, ax = plt.subplots(figsize=(12, 6))
+for cur, preds in results.items():
+ax.plot(range(steps), preds["ARIMA"], marker="o", label=f"{cur} ARIMA")
+ax.plot(range(steps), preds["Prophet"], marker="x", linestyle="--", label=f"{cur} Prophet")
+ax.set_title("7-Day Multi-Currency Forecasts")
+ax.set_xlabel("Days Ahead")
+ax.set_ylabel("Rate")
+ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+st.pyplot(fig)
+# Metrics table
+metrics_rows = []
+for cur, preds in results.items():
+actual_vals = st.session_state.history[st.session_state.history["Currency"] == cur]["Rate"].values[-steps:]
+if len(actual_vals) >= steps:
+arima_metrics = compute_metrics(actual_vals, preds["ARIMA"][:steps])
+prophet_metrics = compute_metrics(actual_vals, preds["Prophet"][:steps])
+metrics_rows.append({"Currency": cur, "Model": "ARIMA", **arima_metrics})
+metrics_rows.append({"Currency": cur, "Model": "Prophet", **prophet_metrics})
+if metrics_rows:
+st.subheader("7-Day Forecast Accuracy (RMSE, MAPE)")
+st.table(pd.DataFrame(metrics_rows))
+# End of file
