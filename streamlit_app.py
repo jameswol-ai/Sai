@@ -14,6 +14,7 @@ import queue
 import numpy as np
 import requests
 import os
+import warnings
 from typing import Dict, List, Optional, Any
 
 # -------------------- Optional Plotly import --------------------
@@ -74,17 +75,50 @@ st.markdown("""
 if not PLOTLY_AVAILABLE:
     st.info("📊 Install plotly for interactive charts: `pip install plotly`")
 
-# -------------------- Safe forecast stubs --------------------
-def fit_arima(series, order=(2,1,2)):
-    return {"last_value": series.iloc[-1], "std": series.std()}
+# -------------------- ARIMA (Real Implementation) --------------------
+def fit_arima(series: pd.Series, order: tuple = (2,1,2)) -> Dict[str, Any]:
+    """Fit an ARIMA model using statsmodels if available, else stub."""
+    last_value = series.iloc[-1]
+    std = series.std()
+    result = {
+        "last_value": last_value,
+        "std": std,
+        "fitted": False,
+        "model": None,
+        "order": order
+    }
+    try:
+        from statsmodels.tsa.arima.model import ARIMA
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = ARIMA(series, order=order)
+            fitted_model = model.fit()
+        result["model"] = fitted_model
+        result["fitted"] = True
+        return result
+    except ImportError:
+        return result
+    except Exception as e:
+        logger.warning(f"ARIMA fitting failed ({e}), using stub.")
+        return result
 
-def forecast_next(arima_model, steps=1):
+def forecast_next(arima_model: Dict[str, Any], steps: int = 1) -> List[float]:
+    """Forecast from the fitted model (or stub)."""
+    if arima_model.get("fitted") and arima_model["model"] is not None:
+        try:
+            fc = arima_model["model"].forecast(steps=steps)
+            return fc.tolist()
+        except Exception as e:
+            logger.warning(f"ARIMA forecast failed ({e}), using stub.")
+
+    # Stub fallback
     last = arima_model["last_value"]
     std = arima_model["std"]
-    np.random.seed(42)
-    return [last + np.random.normal(0, std*0.02) for _ in range(steps)]
+    rng = np.random.default_rng(42)   # isolated seed
+    return [last + rng.normal(0, std * 0.02) for _ in range(steps)]
 
-def fit_prophet(df_rates):
+# -------------------- Prophet (Stub, unchanged) --------------------
+def fit_prophet(df_rates: pd.DataFrame):
     df = df_rates.copy()
     df["ds_num"] = (df["ds"] - df["ds"].min()).dt.total_seconds() / 86400
     slope = 0
@@ -92,7 +126,7 @@ def fit_prophet(df_rates):
         slope = np.polyfit(df["ds_num"], df["y"], 1)[0]
     return {"last_date": df["ds"].max(), "slope": slope, "last_y": df["y"].iloc[-1]}
 
-def forecast_future(prophet_model, periods=1, freq="D"):
+def forecast_future(prophet_model: dict, periods: int = 1, freq: str = "D") -> pd.DataFrame:
     last_date = prophet_model["last_date"]
     slope = prophet_model["slope"]
     last_y = prophet_model["last_y"]
@@ -101,7 +135,7 @@ def forecast_future(prophet_model, periods=1, freq="D"):
     return pd.DataFrame({"ds": dates, "yhat": values})
 
 # -------------------- Utility metrics --------------------
-def compute_metrics(actual, predicted):
+def compute_metrics(actual: np.ndarray, predicted: np.ndarray) -> Dict[str, Optional[float]]:
     actual = np.array(actual, dtype=float)
     predicted = np.array(predicted, dtype=float)
     if actual.size == 0 or predicted.size == 0:
@@ -176,6 +210,8 @@ if "trading_account" not in st.session_state:
     }
 if "auto_trade" not in st.session_state:
     st.session_state.auto_trade = False
+if "last_history_update" not in st.session_state:
+    st.session_state.last_history_update = None
 
 HISTORY_MAX_ROWS = 1000
 
@@ -229,7 +265,7 @@ EAST_AFRICAN_CURRENCIES = ["UGX", "KES", "TZS", "RWF", "BIF", "SSP", "ETB"]
 OTHER_CURRENCIES = ["USD", "EUR", "GBP", "JPY"]
 ALL_CURRENCIES = EAST_AFRICAN_CURRENCIES + OTHER_CURRENCIES
 
-# -------------------- Real exchange rate fetcher (Frankfurter API) --------------------
+# -------------------- Real exchange rate fetcher --------------------
 @st.cache_data(ttl=60)
 def get_real_rates():
     try:
@@ -280,7 +316,13 @@ def forecast_rates(rates):
             for cur, val in rates.items()}
 
 def update_history(rates, forecast):
+    """Append new rows to history only if at least 60s have passed."""
     now = datetime.now()
+    last = st.session_state.last_history_update
+    if last is not None and (now - last).total_seconds() < 60:
+        return  # throttle updates to once per minute
+    st.session_state.last_history_update = now
+
     rows = [{"Time": now.isoformat(), "Currency": cur,
              "Rate": rates[cur], "Forecast": forecast[cur]}
             for cur in rates.keys()]
@@ -300,15 +342,18 @@ def generate_trade_signal(current_rate, forecast_value, threshold=0.01):
         return "SELL"
     return "HOLD"
 
-# -------------------- Central forecast function --------------------
-def run_forecast(currency, horizon, steps, freq="D"):
+# -------------------- Central forecast function (cached) --------------------
+@st.cache_data(ttl=300, show_spinner="Forecasting...")
+def run_forecast(currency: str, horizon: str, steps: int, freq: str = "D") -> Dict[str, Any]:
+    """Generate forecasts for a single currency. Results cached for 5 minutes."""
     df_all = st.session_state.history.copy()
     df_all["Time_dt"] = pd.to_datetime(df_all["Time"])
     df_cur = df_all[df_all["Currency"] == currency].sort_values("Time_dt")
 
     if len(df_cur) < 20:
         current_rate = st.session_state.rates.get(currency, 1.0)
-        fallback_preds = [round(current_rate * (1 + random.uniform(-0.01, 0.01)), 2)
+        rng = np.random.default_rng(42)
+        fallback_preds = [round(current_rate * (1 + rng.uniform(-0.01, 0.01)), 2)
                           for _ in range(steps)]
         return {
             "currency": currency,
@@ -324,22 +369,27 @@ def run_forecast(currency, horizon, steps, freq="D"):
             "actual_test": [],
             "train": df_cur,
             "test": pd.DataFrame(),
-            "warning": "Insufficient history – forecast is a rough estimate only."
+            "warning": "Insufficient history – forecast is a rough estimate only.",
+            "arima_fitted": False
         }
 
     train = df_cur.iloc[:-steps] if steps < len(df_cur) else df_cur.iloc[:-1]
     test = df_cur.iloc[-steps:] if steps < len(df_cur) else df_cur.iloc[-1:]
     actual_test = test["Rate"].values
 
+    # ARIMA
     arima_pred = None
     arima_metrics = None
+    arima_fitted = False
     try:
-        arima_model = fit_arima(train["Rate"], order=(2,1,2))
+        arima_model = fit_arima(train["Rate"], order=(2, 1, 2))
         arima_pred = forecast_next(arima_model, steps=steps)
         arima_metrics = compute_metrics(actual_test, arima_pred[:len(actual_test)])
-    except Exception:
-        pass
+        arima_fitted = arima_model.get("fitted", False)
+    except Exception as e:
+        logger.warning(f"ARIMA pipeline failed for {currency}: {e}")
 
+    # Prophet (stub)
     prophet_pred = None
     prophet_metrics = None
     try:
@@ -369,14 +419,16 @@ def run_forecast(currency, horizon, steps, freq="D"):
         "actual_test": actual_test,
         "train": train,
         "test": test,
-        "warning": None
+        "warning": None,
+        "arima_fitted": arima_fitted
     }
 
 # -------------------- Technical Indicators --------------------
-def compute_indicators(df_cur, rsi_period=14, sma_windows=[20, 50],
-                       macd_fast=12, macd_slow=26, macd_signal=9,
-                       bb_period=20, bb_std=2,
-                       stoch_k=14, stoch_d=3, atr_period=14):
+def compute_indicators(df_cur: pd.DataFrame, rsi_period: int = 14,
+                       sma_windows: list = [20, 50],
+                       macd_fast: int = 12, macd_slow: int = 26, macd_signal: int = 9,
+                       bb_period: int = 20, bb_std: int = 2,
+                       stoch_k: int = 14, stoch_d: int = 3, atr_period: int = 14) -> Optional[pd.DataFrame]:
     df = df_cur.copy().sort_values("Time_dt")
     min_len = max(rsi_period, macd_slow, bb_period, stoch_k, atr_period) + 1
     if len(df) < min_len:
@@ -414,9 +466,9 @@ def compute_indicators(df_cur, rsi_period=14, sma_windows=[20, 50],
     df["Stoch_%K"] = 100 * (df["Rate"] - low_min) / (high_max - low_min)
     df["Stoch_%D"] = df["Stoch_%K"].rolling(window=stoch_d, min_periods=stoch_d).mean()
 
-    # OBV
-    np.random.seed(42)
-    volume = np.random.randint(500, 2000, size=len(df))
+    # OBV (local random state)
+    rng = np.random.RandomState(42)
+    volume = rng.randint(500, 2000, size=len(df))
     obv = [0]
     for i in range(1, len(df)):
         if df["Rate"].iloc[i] > df["Rate"].iloc[i-1]:
@@ -428,8 +480,8 @@ def compute_indicators(df_cur, rsi_period=14, sma_windows=[20, 50],
     df["OBV"] = obv
 
     # ATR
-    high = df["Rate"] * (1 + np.random.uniform(0, 0.001, len(df)))
-    low = df["Rate"] * (1 - np.random.uniform(0, 0.001, len(df)))
+    high = df["Rate"] * (1 + rng.uniform(0, 0.001, len(df)))
+    low = df["Rate"] * (1 - rng.uniform(0, 0.001, len(df)))
     prev_close = df["Rate"].shift(1)
     tr1 = high - low
     tr2 = abs(high - prev_close)
@@ -444,28 +496,23 @@ class TradingAPI:
     """Base class for trading API integrations."""
     def get_account_summary(self) -> Dict:
         raise NotImplementedError
-
     def place_order(self, symbol: str, units: int, stop_loss: Optional[float] = None,
                     take_profit: Optional[float] = None, order_type: str = "MARKET") -> Dict:
         raise NotImplementedError
-
     def get_open_positions(self) -> List[Dict]:
         raise NotImplementedError
-
     def get_order_history(self) -> List[Dict]:
         raise NotImplementedError
 
 class SimulatedTrading(TradingAPI):
     def __init__(self, account: Dict):
         self.account = account
-
     def get_account_summary(self):
         return {
             "balance": self.account["balance"],
             "equity": self.account["equity"],
             "open_positions": len(self.account["open_positions"])
         }
-
     def place_order(self, symbol, units, stop_loss=None, take_profit=None, order_type="MARKET"):
         rate = st.session_state.rates.get(symbol, 1.0)
         order = {
@@ -483,13 +530,10 @@ class SimulatedTrading(TradingAPI):
         self.account["order_history"].append(order)
         self.account["equity"] = self.account["balance"]
         return order
-
     def get_open_positions(self):
         return self.account["open_positions"]
-
     def get_order_history(self):
         return self.account["order_history"]
-
     def close_position(self, position_id):
         for p in self.account["open_positions"]:
             if p["id"] == position_id:
@@ -524,7 +568,6 @@ class OANDA_Trading(TradingAPI):
     def __init__(self, ctx, account_id):
         self.ctx = ctx
         self.account_id = account_id
-
     def get_account_summary(self):
         response = self.ctx.account.get(self.account_id)
         if response.status != 200:
@@ -535,7 +578,6 @@ class OANDA_Trading(TradingAPI):
             "equity": acc["NAV"],
             "open_positions": len(self.get_open_positions())
         }
-
     def place_order(self, symbol, units, stop_loss=None, take_profit=None, order_type="MARKET"):
         instr = f"{symbol[:3]}_{symbol[3:]}" if len(symbol) == 6 else f"USD_{symbol}"
         order = {
@@ -554,13 +596,11 @@ class OANDA_Trading(TradingAPI):
         if response.status != 201:
             raise Exception(f"Order failed: {response.body}")
         return response.body
-
     def get_open_positions(self):
         response = self.ctx.position.list_open(self.account_id)
         if response.status != 200:
             return []
         return response.body.get("positions", [])
-
     def get_order_history(self):
         response = self.ctx.order.list(self.account_id, {"count": 50})
         if response.status != 200:
@@ -574,7 +614,6 @@ col_title, col_status = st.columns([3, 1])
 with col_title:
     st.markdown("<h1 style='color:#00F2FE;'>📈 SAI Forex Trading Bot</h1>", unsafe_allow_html=True)
     st.markdown("<p style='color:#AAAAAA; font-size:1.1rem;'>East African Currency Trading & Forecasting – UGX, KES, TZS, RWF, BIF, SSP, ETB</p>", unsafe_allow_html=True)
-
 with col_status:
     if st.session_state.use_real_data:
         st.success("🔴 LIVE")
@@ -677,7 +716,6 @@ with tabs[0]:
             )
             st.plotly_chart(fig2, use_container_width=True)
         else:
-            # Fallback to Matplotlib
             fig, ax = plt.subplots(figsize=(10, 4))
             for cur in EAST_AFRICAN_CURRENCIES:
                 cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
@@ -690,7 +728,7 @@ with tabs[0]:
             fig.autofmt_xdate()
             st.pyplot(fig)
 
-# --- Daily Forecast (unchanged) ---
+# --- Daily Forecast ---
 with tabs[1]:
     st.markdown("<div class='section-title'>📅 Daily Forecast (Next Day)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="daily_cur")
@@ -699,6 +737,10 @@ with tabs[1]:
             result = run_forecast(currency, "daily", steps=1)
         if result.get("warning"):
             st.warning(result["warning"])
+        if result.get("arima_fitted"):
+            st.success("✅ ARIMA fitted with real model")
+        else:
+            st.info("ℹ️ ARIMA using rough estimate (statsmodels not installed)")
         col1, col2, col3 = st.columns(3)
         col1.metric("Current Rate", f"{result['current_rate']:.2f}")
         col2.metric("ARIMA Forecast", f"{result['arima_forecast']:.2f}" if result['arima_forecast'] else "N/A")
@@ -709,7 +751,7 @@ with tabs[1]:
         if result['prophet_metrics']:
             st.caption(f"Prophet Backtest RMSE: {result['prophet_metrics']['RMSE']}, MAPE: {result['prophet_metrics']['MAPE']}%")
 
-# --- Weekly Forecast (unchanged) ---
+# --- Weekly Forecast ---
 with tabs[2]:
     st.markdown("<div class='section-title'>📆 Weekly Forecast (7 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="weekly_cur")
@@ -718,6 +760,10 @@ with tabs[2]:
             result = run_forecast(currency, "weekly", steps=7)
         if result.get("warning"):
             st.warning(result["warning"])
+        if result.get("arima_fitted"):
+            st.success("✅ ARIMA fitted with real model")
+        else:
+            st.info("ℹ️ ARIMA using rough estimate (statsmodels not installed)")
         fig, ax = plt.subplots()
         days = list(range(1, 8))
         if result['arima_all_preds']:
@@ -732,7 +778,7 @@ with tabs[2]:
         st.pyplot(fig)
         st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
 
-# --- Monthly Forecast (unchanged) ---
+# --- Monthly Forecast ---
 with tabs[3]:
     st.markdown("<div class='section-title'>🗓️ Monthly Forecast (30 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="monthly_cur")
@@ -741,6 +787,10 @@ with tabs[3]:
             result = run_forecast(currency, "monthly", steps=30)
         if result.get("warning"):
             st.warning(result["warning"])
+        if result.get("arima_fitted"):
+            st.success("✅ ARIMA fitted with real model")
+        else:
+            st.info("ℹ️ ARIMA using rough estimate (statsmodels not installed)")
         fig, ax = plt.subplots()
         days = list(range(1, 31))
         if result['arima_all_preds']:
@@ -754,7 +804,7 @@ with tabs[3]:
         st.pyplot(fig)
         st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
 
-# --- Trade Recommendations (unchanged) ---
+# --- Trade Recommendations ---
 with tabs[4]:
     st.markdown("<div class='section-title'>📊 Trade Recommendations</div>", unsafe_allow_html=True)
     horizon = st.radio("Horizon", ["Daily", "Weekly", "Monthly"], horizontal=True)
@@ -786,12 +836,13 @@ with tabs[4]:
                 elif val == 'SELL':
                     return 'background-color: #FF1744; color: white'
                 return ''
-            st.dataframe(df_signals.style.applymap(highlight_signal, subset=['ARIMA Signal', 'Prophet Signal']),
+            # Fixed: use Styler.map instead of deprecated applymap
+            st.dataframe(df_signals.style.map(highlight_signal, subset=['ARIMA Signal', 'Prophet Signal']),
                          use_container_width=True)
         else:
             st.warning("No signals generated.")
 
-# --- Live Trading Tab (unchanged) ---
+# --- Live Trading ---
 with tabs[5]:
     st.markdown("<div class='section-title'>💹 Live Trading</div>", unsafe_allow_html=True)
     trading_api = get_trading_api()
@@ -878,7 +929,7 @@ with tabs[5]:
         st.info("Auto‑trade would place orders based on the latest signals. (Implementation depends on signal generation.)")
         st.warning("Auto‑trade logic is still a placeholder. You can extend by calling run_forecast and placing orders accordingly.")
 
-# --- Technical Analysis (with fallback) ---
+# --- Technical Analysis ---
 with tabs[6]:
     st.markdown("<div class='section-title'>📉 Technical Indicators</div>", unsafe_allow_html=True)
     if st.session_state.history.empty:
@@ -914,7 +965,6 @@ with tabs[6]:
                 col11.metric("OBV", f"{latest['OBV']:,.0f}")
                 col12.metric("Trend", "Bullish" if latest['SMA_20'] > latest['SMA_50'] else "Bearish" if pd.notna(latest['SMA_20']) else "N/A")
 
-                # Chart: Plotly or Matplotlib fallback
                 if PLOTLY_AVAILABLE:
                     fig = make_subplots(
                         rows=5, cols=1,
@@ -949,7 +999,6 @@ with tabs[6]:
                     fig.update_yaxes(title_text="Vol / OBV", row=5, col=1)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    # Matplotlib fallback: simpler multi-panel chart
                     fig, axes = plt.subplots(5, 1, figsize=(12, 18), sharex=True)
                     axes[0].plot(ind_df["Time_dt"], ind_df["Rate"], label="Rate", color="cyan")
                     axes[0].plot(ind_df["Time_dt"], ind_df["BB_upper"], linestyle="--", color="gray")
@@ -1017,13 +1066,13 @@ with tabs[6]:
                 else:
                     st.write("Stochastic: %K below %D – bearish momentum.")
 
-# --- Strategy Config (unchanged) ---
+# --- Strategy Config ---
 with tabs[7]:
     st.markdown("<div class='section-title'>⚙️ Strategy Configuration</div>", unsafe_allow_html=True)
     risk_level = st.slider("Risk Level", 1, 10, 5)
     st.info("Risk level will be used in future trading logic.")
 
-# --- Logs (unchanged) ---
+# --- Logs ---
 with tabs[8]:
     st.markdown("<div class='section-title'>📋 Application Logs</div>", unsafe_allow_html=True)
     try:
@@ -1033,7 +1082,7 @@ with tabs[8]:
     except FileNotFoundError:
         st.info("No logs yet.")
 
-# --- Model Testing (unchanged) ---
+# --- Model Testing ---
 with tabs[9]:
     st.markdown("<div class='section-title'>🧪 Model Testing</div>", unsafe_allow_html=True)
     st.warning("⚠️ Only upload .pkl files you trust.")
@@ -1053,7 +1102,7 @@ with tabs[9]:
         else:
             st.info("Please confirm that you trust the uploaded file to continue.")
 
-# --- Debug (unchanged) ---
+# --- Debug ---
 with tabs[10]:
     st.markdown("<div class='section-title'>🛠️ Debug</div>", unsafe_allow_html=True)
     st.json({k: str(v) if not isinstance(v, (dict, list, int, float, bool, type(None))) else v
