@@ -16,7 +16,7 @@ import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# -------------------- Custom CSS --------------------
+# -------------------- Custom CSS (unchanged) --------------------
 st.markdown("""
 <style>
     .main { background-color: #0E1117; }
@@ -133,7 +133,7 @@ handler.setFormatter(formatter)
 if not logger.handlers:
     logger.addHandler(handler)
 
-# -------------------- Session state --------------------
+# -------------------- Session state (unchanged) --------------------
 if "bot_thread" not in st.session_state:
     st.session_state.bot_thread = None
 if "bot_running" not in st.session_state:
@@ -159,7 +159,7 @@ if "use_real_data" not in st.session_state:
 
 HISTORY_MAX_ROWS = 1000
 
-# -------------------- Bot thread management --------------------
+# -------------------- Bot thread management (unchanged) --------------------
 def bot_loop(queue_obj, stop_event):
     logger.info("Bot thread started.")
     while not stop_event.is_set():
@@ -204,7 +204,7 @@ def drain_bot_queue(max_items=50):
         st.session_state.logs = st.session_state.logs[-1000:]
     return drained
 
-# -------------------- East African currencies --------------------
+# -------------------- East African currencies (unchanged) --------------------
 EAST_AFRICAN_CURRENCIES = ["UGX", "KES", "TZS", "RWF", "BIF", "SSP", "ETB"]
 OTHER_CURRENCIES = ["USD", "EUR", "GBP", "JPY"]
 ALL_CURRENCIES = EAST_AFRICAN_CURRENCIES + OTHER_CURRENCIES
@@ -280,7 +280,7 @@ def generate_trade_signal(current_rate, forecast_value, threshold=0.01):
         return "SELL"
     return "HOLD"
 
-# -------------------- Central forecast function --------------------
+# -------------------- Central forecast function (unchanged) --------------------
 def run_forecast(currency, horizon, steps, freq="D"):
     df_all = st.session_state.history.copy()
     df_all["Time_dt"] = pd.to_datetime(df_all["Time"])
@@ -352,12 +352,18 @@ def run_forecast(currency, horizon, steps, freq="D"):
         "warning": None
     }
 
-# -------------------- Technical Indicators --------------------
+# -------------------- Technical Indicators (ENHANCED) --------------------
 def compute_indicators(df_cur, rsi_period=14, sma_windows=[20, 50],
                        macd_fast=12, macd_slow=26, macd_signal=9,
-                       bb_period=20, bb_std=2):
+                       bb_period=20, bb_std=2,
+                       stoch_k=14, stoch_d=3, atr_period=14):
+    """
+    Compute RSI, SMAs, MACD, Bollinger Bands, Stochastic Oscillator, OBV, ATR.
+    Returns DataFrame with all columns or None if not enough data.
+    """
     df = df_cur.copy().sort_values("Time_dt")
-    if len(df) < max(rsi_period, macd_slow, bb_period) + 1:
+    min_len = max(rsi_period, macd_slow, bb_period, stoch_k, atr_period) + 1
+    if len(df) < min_len:
         return None
 
     # RSI
@@ -385,6 +391,35 @@ def compute_indicators(df_cur, rsi_period=14, sma_windows=[20, 50],
     bb_std_dev = df["Rate"].rolling(window=bb_period, min_periods=bb_period).std()
     df["BB_upper"] = df["BB_middle"] + bb_std * bb_std_dev
     df["BB_lower"] = df["BB_middle"] - bb_std * bb_std_dev
+
+    # Stochastic Oscillator
+    low_min = df["Rate"].rolling(window=stoch_k, min_periods=stoch_k).min()
+    high_max = df["Rate"].rolling(window=stoch_k, min_periods=stoch_k).max()
+    df["Stoch_%K"] = 100 * (df["Rate"] - low_min) / (high_max - low_min)
+    df["Stoch_%D"] = df["Stoch_%K"].rolling(window=stoch_d, min_periods=stoch_d).mean()
+
+    # OBV (On-Balance Volume) – using simulated volume (random) for demo
+    np.random.seed(42)
+    volume = np.random.randint(500, 2000, size=len(df))
+    obv = [0]
+    for i in range(1, len(df)):
+        if df["Rate"].iloc[i] > df["Rate"].iloc[i-1]:
+            obv.append(obv[-1] + volume[i])
+        elif df["Rate"].iloc[i] < df["Rate"].iloc[i-1]:
+            obv.append(obv[-1] - volume[i])
+        else:
+            obv.append(obv[-1])
+    df["OBV"] = obv
+
+    # ATR (Average True Range)
+    high = df["Rate"] * (1 + np.random.uniform(0, 0.001, len(df)))  # simulated high
+    low = df["Rate"] * (1 - np.random.uniform(0, 0.001, len(df)))   # simulated low
+    prev_close = df["Rate"].shift(1)
+    tr1 = high - low
+    tr2 = abs(high - prev_close)
+    tr3 = abs(low - prev_close)
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    df["ATR"] = true_range.rolling(window=atr_period, min_periods=atr_period).mean()
 
     return df
 
@@ -416,7 +451,7 @@ tabs = st.tabs([
     "🛠️ Debug"
 ])
 
-# --- Dashboard ---
+# --- Dashboard (Plotly chart) ---
 with tabs[0]:
     st.markdown("<div class='section-title'>🌍 East African Forex Rates (USD Base)</div>", unsafe_allow_html=True)
     rates, deltas = fetch_currency_data()
@@ -474,7 +509,6 @@ with tabs[0]:
 
     if not st.session_state.history.empty:
         st.markdown("<div class='section-title'>📉 East African Rate Trends</div>", unsafe_allow_html=True)
-        # Interactive Plotly chart instead of Matplotlib
         fig2 = go.Figure()
         df_plot = st.session_state.history.copy()
         df_plot["Time_dt"] = pd.to_datetime(df_plot["Time"])
@@ -498,7 +532,7 @@ with tabs[0]:
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-# --- Daily Forecast (unchanged) ---
+# --- Daily, Weekly, Monthly, Trade Recs (unchanged) ---
 with tabs[1]:
     st.markdown("<div class='section-title'>📅 Daily Forecast (Next Day)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="daily_cur")
@@ -517,7 +551,6 @@ with tabs[1]:
         if result['prophet_metrics']:
             st.caption(f"Prophet Backtest RMSE: {result['prophet_metrics']['RMSE']}, MAPE: {result['prophet_metrics']['MAPE']}%")
 
-# --- Weekly Forecast (unchanged) ---
 with tabs[2]:
     st.markdown("<div class='section-title'>📆 Weekly Forecast (7 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="weekly_cur")
@@ -540,7 +573,6 @@ with tabs[2]:
         st.pyplot(fig)
         st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
 
-# --- Monthly Forecast (unchanged) ---
 with tabs[3]:
     st.markdown("<div class='section-title'>🗓️ Monthly Forecast (30 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="monthly_cur")
@@ -562,7 +594,6 @@ with tabs[3]:
         st.pyplot(fig)
         st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
 
-# --- Trade Recommendations (unchanged) ---
 with tabs[4]:
     st.markdown("<div class='section-title'>📊 Trade Recommendations</div>", unsafe_allow_html=True)
     horizon = st.radio("Horizon", ["Daily", "Weekly", "Monthly"], horizontal=True)
@@ -599,7 +630,7 @@ with tabs[4]:
         else:
             st.warning("No signals generated.")
 
-# --- Technical Analysis (ENHANCED with MACD + Bollinger Bands) ---
+# --- Technical Analysis (EXPANDED with Stochastic, OBV, ATR) ---
 with tabs[5]:
     st.markdown("<div class='section-title'>📉 Technical Indicators</div>", unsafe_allow_html=True)
     if st.session_state.history.empty:
@@ -610,7 +641,7 @@ with tabs[5]:
         df_all["Time_dt"] = pd.to_datetime(df_all["Time"])
         df_cur = df_all[df_all["Currency"] == currency].sort_values("Time_dt")
 
-        if len(df_cur) < 30:  # enough for all indicators
+        if len(df_cur) < 30:
             st.warning(f"Need at least 30 data points for reliable indicators. Currently have {len(df_cur)}.")
         else:
             ind_df = compute_indicators(df_cur)
@@ -619,26 +650,35 @@ with tabs[5]:
             else:
                 latest = ind_df.iloc[-1]
                 st.subheader(f"{currency} – Latest Indicator Values")
+                # First row of metrics (existing)
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Rate", f"{latest['Rate']:,.2f}")
                 col2.metric("RSI (14)", f"{latest['RSI']:.2f}")
                 col3.metric("MACD", f"{latest['MACD']:.5f}")
                 col4.metric("Signal", f"{latest['MACD_signal']:.5f}")
-                col5, col6, col7, _ = st.columns(4)
-                col5.metric("Bollinger Upper", f"{latest['BB_upper']:,.2f}")
-                col6.metric("Bollinger Middle", f"{latest['BB_middle']:,.2f}")
-                col7.metric("Bollinger Lower", f"{latest['BB_lower']:,.2f}")
+                # Second row: Bollinger & new
+                col5, col6, col7, col8 = st.columns(4)
+                col5.metric("BB Upper", f"{latest['BB_upper']:,.2f}")
+                col6.metric("BB Middle", f"{latest['BB_middle']:,.2f}")
+                col7.metric("BB Lower", f"{latest['BB_lower']:,.2f}")
+                col8.metric("ATR (14)", f"{latest['ATR']:.4f}")
+                # Third row: Stochastic & OBV
+                col9, col10, col11, col12 = st.columns(4)
+                col9.metric("Stoch %K", f"{latest['Stoch_%K']:.2f}")
+                col10.metric("Stoch %D", f"{latest['Stoch_%D']:.2f}")
+                col11.metric("OBV", f"{latest['OBV']:,.0f}")
+                col12.metric("Trend", "Bullish" if latest['SMA_20'] > latest['SMA_50'] else "Bearish" if pd.notna(latest['SMA_20']) else "N/A")
 
-                # Create interactive multi-panel chart
+                # Interactive multi-panel chart (5 rows)
                 fig = make_subplots(
-                    rows=4, cols=1,
+                    rows=5, cols=1,
                     shared_xaxes=True,
-                    vertical_spacing=0.03,
-                    row_heights=[0.5, 0.2, 0.15, 0.15],
-                    subplot_titles=("Price & Bollinger Bands", "RSI", "MACD", "Volume (simulated)")
+                    vertical_spacing=0.02,
+                    row_heights=[0.45, 0.15, 0.15, 0.15, 0.1],
+                    subplot_titles=("Price & Bollinger Bands", "RSI", "MACD", "Stochastic", "Volume / OBV")
                 )
 
-                # Price with Bollinger Bands
+                # Row 1: Price + BB
                 fig.add_trace(go.Scatter(
                     x=ind_df["Time_dt"], y=ind_df["Rate"],
                     mode='lines', name='Rate',
@@ -660,7 +700,7 @@ with tabs[5]:
                     line=dict(color='gray', dash='dot')
                 ), row=1, col=1)
 
-                # RSI
+                # Row 2: RSI
                 fig.add_trace(go.Scatter(
                     x=ind_df["Time_dt"], y=ind_df["RSI"],
                     mode='lines', name='RSI',
@@ -669,7 +709,7 @@ with tabs[5]:
                 fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
                 fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
 
-                # MACD
+                # Row 3: MACD
                 fig.add_trace(go.Scatter(
                     x=ind_df["Time_dt"], y=ind_df["MACD"],
                     mode='lines', name='MACD',
@@ -687,26 +727,44 @@ with tabs[5]:
                     marker_color=colors_hist
                 ), row=3, col=1)
 
-                # Volume (simulated as random, just for demo)
-                np.random.seed(42)
-                vol = np.random.randint(500, 2000, size=len(ind_df))
+                # Row 4: Stochastic
+                fig.add_trace(go.Scatter(
+                    x=ind_df["Time_dt"], y=ind_df["Stoch_%K"],
+                    mode='lines', name='%K',
+                    line=dict(color='cyan')
+                ), row=4, col=1)
+                fig.add_trace(go.Scatter(
+                    x=ind_df["Time_dt"], y=ind_df["Stoch_%D"],
+                    mode='lines', name='%D',
+                    line=dict(color='magenta', dash='dot')
+                ), row=4, col=1)
+                fig.add_hline(y=80, line_dash="dash", line_color="red", row=4, col=1)
+                fig.add_hline(y=20, line_dash="dash", line_color="green", row=4, col=1)
+
+                # Row 5: Volume + OBV (simulated volume bar + OBV line)
                 fig.add_trace(go.Bar(
-                    x=ind_df["Time_dt"], y=vol,
+                    x=ind_df["Time_dt"], y=np.random.randint(500, 2000, size=len(ind_df)),
                     name='Volume',
                     marker_color='#7F7F7F'
-                ), row=4, col=1)
+                ), row=5, col=1)
+                fig.add_trace(go.Scatter(
+                    x=ind_df["Time_dt"], y=ind_df["OBV"],
+                    mode='lines', name='OBV',
+                    line=dict(color='orange')
+                ), row=5, col=1)
 
                 fig.update_layout(
-                    height=900,
+                    height=1200,
                     template="plotly_dark",
                     showlegend=True,
                     hovermode="x unified"
                 )
-                fig.update_xaxes(title_text="Time", row=4, col=1)
+                fig.update_xaxes(title_text="Time", row=5, col=1)
                 fig.update_yaxes(title_text="Rate", row=1, col=1)
-                fig.update_yaxes(title_text="RSI", range=[0, 100], row=2, col=1)
+                fig.update_yaxes(title_text="RSI", range=[0,100], row=2, col=1)
                 fig.update_yaxes(title_text="MACD", row=3, col=1)
-                fig.update_yaxes(title_text="Volume", row=4, col=1)
+                fig.update_yaxes(title_text="Stochastic", range=[0,100], row=4, col=1)
+                fig.update_yaxes(title_text="Vol / OBV", row=5, col=1)
 
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -727,12 +785,26 @@ with tabs[5]:
                     else:
                         st.write("MACD is **below** signal line – bearish.")
 
-                # Bollinger squeeze detection (simple)
+                # Bollinger squeeze
                 bb_width = latest['BB_upper'] - latest['BB_lower']
-                if bb_width < 0.02 * latest['Rate']:  # 2% of price
+                if bb_width < 0.02 * latest['Rate']:
                     st.write("Bollinger Bands are **squeezing** – breakout possible.")
                 else:
                     st.write("Bollinger Bands are normal.")
+
+                # Stochastic
+                stoch_k = latest['Stoch_%K']
+                stoch_d = latest['Stoch_%D']
+                if stoch_k > 80 and stoch_d > 80:
+                    st.warning("Stochastic overbought – consider SELL.")
+                elif stoch_k < 20 and stoch_d < 20:
+                    st.success("Stochastic oversold – consider BUY.")
+                else:
+                    st.info("Stochastic neutral.")
+                if stoch_k > stoch_d:
+                    st.write("Stochastic: %K above %D – bullish momentum.")
+                else:
+                    st.write("Stochastic: %K below %D – bearish momentum.")
 
 # --- Strategy Config (unchanged) ---
 with tabs[6]:
