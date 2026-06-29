@@ -218,10 +218,6 @@ ALL_CURRENCIES = EAST_AFRICAN_CURRENCIES + OTHER_CURRENCIES
 # -------------------- Real exchange rate fetcher (Frankfurter API) --------------------
 @st.cache_data(ttl=60)
 def get_real_rates():
-    """
-    Fetches live forex rates from Frankfurter API.
-    Returns a dict of currency: rate (USD base), or None on failure.
-    """
     try:
         url = "https://api.frankfurter.app/latest?from=USD&to=" + ",".join(ALL_CURRENCIES)
         resp = requests.get(url, timeout=5)
@@ -235,25 +231,19 @@ def get_real_rates():
         return None
 
 def sample_currency_rates():
-    """Generates realistic random rates for East African currencies."""
-    rates = {}
-    # Typical ranges (approx.)
     ranges = {
         "UGX": (3700, 3900), "KES": (125, 140), "TZS": (2500, 2700),
         "RWF": (1300, 1500), "BIF": (2800, 3000), "SSP": (1500, 1800),
         "ETB": (55, 60), "USD": (1, 1), "EUR": (0.9, 1.1),
         "GBP": (0.75, 0.85), "JPY": (140, 150)
     }
+    rates = {}
     for cur in ALL_CURRENCIES:
         low, high = ranges.get(cur, (100, 5000))
         rates[cur] = round(random.uniform(low, high), 2)
     return rates
 
 def fetch_currency_data():
-    """
-    Retrieves current rates (real or simulated) and calculates percentage change
-    from the previous update for each East African currency.
-    """
     real = get_real_rates()
     if real:
         rates = real
@@ -275,7 +265,6 @@ def fetch_currency_data():
     return rates, delta
 
 def forecast_rates(rates):
-    """Random walk forecast for visual display (not used for trading)."""
     return {cur: round(val * (1 + random.uniform(-0.02, 0.02)), 2) for cur, val in rates.items()}
 
 def update_history(rates, forecast):
@@ -304,13 +293,33 @@ def generate_trade_signal(current_rate, forecast_value, threshold=0.01):
     else:
         return "HOLD"
 
-# -------------------- Forecast function --------------------
+# -------------------- Forecast function (with fallback for low data) --------------------
 def run_forecast(currency, horizon, steps, freq="D"):
     df_all = st.session_state.history.copy()
     df_all["Time_dt"] = pd.to_datetime(df_all["Time"])
     df_cur = df_all[df_all["Currency"] == currency].sort_values("Time_dt")
+
+    # Fallback when not enough historical data
     if len(df_cur) < 20:
-        return "Not enough data (min 20 points)."
+        # Use current rate from session state if available, else fallback to 1.0
+        current_rate = st.session_state.rates.get(currency, 1.0)
+        fallback_preds = [round(current_rate * (1 + random.uniform(-0.01, 0.01)), 2) for _ in range(steps)]
+        return {
+            "currency": currency,
+            "current_rate": current_rate,
+            "arima_forecast": fallback_preds[0],
+            "prophet_forecast": None,
+            "arima_signal": "HOLD",
+            "prophet_signal": None,
+            "arima_all_preds": fallback_preds,
+            "prophet_all_preds": None,
+            "arima_metrics": {"RMSE": None, "MAPE": None},
+            "prophet_metrics": None,
+            "actual_test": [],
+            "train": df_cur,
+            "test": pd.DataFrame(),
+            "warning": "Insufficient history – forecast is a rough estimate only."
+        }
 
     train = df_cur.iloc[:-steps] if steps < len(df_cur) else df_cur.iloc[:-1]
     test = df_cur.iloc[-steps:] if steps < len(df_cur) else df_cur.iloc[-1:]
@@ -353,13 +362,14 @@ def run_forecast(currency, horizon, steps, freq="D"):
         "prophet_metrics": prophet_metrics,
         "actual_test": actual_test,
         "train": train,
-        "test": test
+        "test": test,
+        "warning": None
     }
 
 # -------------------- Streamlit UI --------------------
 st.set_page_config(page_title="SAI Forex Bot - East Africa", layout="wide")
 
-# ----- Top bar with title and status -----
+# ----- Top bar -----
 col_title, col_status = st.columns([3, 1])
 with col_title:
     st.markdown("<h1 style='color:#00F2FE;'>📈 SAI Forex Trading Bot</h1>", unsafe_allow_html=True)
@@ -371,7 +381,6 @@ with col_status:
     else:
         st.warning("🟡 SIMULATED")
 
-# ============================= Dashboard Tab =============================
 tabs = st.tabs([
     "📊 Dashboard",
     "📅 Daily Forecast",
@@ -385,14 +394,12 @@ tabs = st.tabs([
 ])
 
 with tabs[0]:
-    # ---- East African Forex Rates Grid ----
     st.markdown("<div class='section-title'>🌍 East African Forex Rates (USD Base)</div>", unsafe_allow_html=True)
 
     rates, deltas = fetch_currency_data()
     forecast = forecast_rates(rates)
     update_history(rates, forecast)
 
-    # Create a responsive grid (4 columns)
     cols = st.columns(4)
     for i, cur in enumerate(EAST_AFRICAN_CURRENCIES):
         rate = rates.get(cur, 0)
@@ -403,7 +410,6 @@ with tabs[0]:
         else:
             delta_str = "N/A"
             delta_class = ""
-
         with cols[i % 4]:
             st.markdown(f"""
             <div class="forex-card">
@@ -415,7 +421,6 @@ with tabs[0]:
 
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')} | Live rates refresh every 60s")
 
-    # ---- Bot Controls & Activity ----
     col_ctrl, col_activity = st.columns([1, 2])
     with col_ctrl:
         st.markdown("<div class='section-title'>⚡ Bot Controls</div>", unsafe_allow_html=True)
@@ -448,13 +453,12 @@ with tabs[0]:
         else:
             st.info("No trades yet. Start the bot to see activity.")
 
-    # ---- Market Trends Chart (East African focus) ----
     if not st.session_state.history.empty:
         st.markdown("<div class='section-title'>📉 East African Rate Trends</div>", unsafe_allow_html=True)
         fig2, ax2 = plt.subplots(figsize=(10, 5))
         df_plot = st.session_state.history.copy()
         df_plot["Time_dt"] = pd.to_datetime(df_plot["Time"])
-        colors = plt.cm.tab10.colors  # distinct colors
+        colors = plt.cm.tab10.colors
         for idx, cur in enumerate(EAST_AFRICAN_CURRENCIES):
             cur_data = df_plot[df_plot["Currency"] == cur].tail(100)
             if not cur_data.empty:
@@ -469,7 +473,7 @@ with tabs[0]:
         plt.xticks(rotation=45)
         st.pyplot(fig2)
 
-# Daily Forecast tab
+# --- Daily Forecast tab ---
 with tabs[1]:
     st.markdown("<div class='section-title'>📅 Daily Forecast (Next Day)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="daily_cur")
@@ -479,6 +483,8 @@ with tabs[1]:
         if isinstance(result, str):
             st.error(result)
         else:
+            if result.get("warning"):
+                st.warning(result["warning"])
             col1, col2, col3 = st.columns(3)
             col1.metric("Current Rate", f"{result['current_rate']:.2f}")
             col2.metric("ARIMA Forecast", f"{result['arima_forecast']:.2f}" if result['arima_forecast'] else "N/A")
@@ -489,7 +495,7 @@ with tabs[1]:
             if result['prophet_metrics']:
                 st.caption(f"Prophet Backtest RMSE: {result['prophet_metrics']['RMSE']}, MAPE: {result['prophet_metrics']['MAPE']}%")
 
-# Weekly Forecast
+# --- Weekly Forecast tab ---
 with tabs[2]:
     st.markdown("<div class='section-title'>📆 Weekly Forecast (7 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="weekly_cur")
@@ -499,6 +505,8 @@ with tabs[2]:
         if isinstance(result, str):
             st.error(result)
         else:
+            if result.get("warning"):
+                st.warning(result["warning"])
             fig, ax = plt.subplots()
             days = list(range(1, 8))
             if result['arima_all_preds']:
@@ -513,7 +521,7 @@ with tabs[2]:
             st.pyplot(fig)
             st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
 
-# Monthly Forecast
+# --- Monthly Forecast tab ---
 with tabs[3]:
     st.markdown("<div class='section-title'>🗓️ Monthly Forecast (30 Days)</div>", unsafe_allow_html=True)
     currency = st.selectbox("Select Currency", EAST_AFRICAN_CURRENCIES, key="monthly_cur")
@@ -523,6 +531,8 @@ with tabs[3]:
         if isinstance(result, str):
             st.error(result)
         else:
+            if result.get("warning"):
+                st.warning(result["warning"])
             fig, ax = plt.subplots()
             days = list(range(1, 31))
             if result['arima_all_preds']:
@@ -536,7 +546,7 @@ with tabs[3]:
             st.pyplot(fig)
             st.write(f"ARIMA Signal: **{result['arima_signal']}**  |  Prophet Signal: **{result['prophet_signal']}**")
 
-# Trade Recommendations
+# --- Trade Recommendations tab ---
 with tabs[4]:
     st.markdown("<div class='section-title'>📊 Trade Recommendations</div>", unsafe_allow_html=True)
     horizon = st.radio("Horizon", ["Daily", "Weekly", "Monthly"], horizontal=True)
@@ -545,10 +555,13 @@ with tabs[4]:
 
     if st.button("Get Trade Signals for East Africa"):
         signals = []
+        fallback_used = False
         with st.spinner("Computing signals..."):
             for cur in EAST_AFRICAN_CURRENCIES:
                 result = run_forecast(cur, horizon.lower(), steps)
                 if isinstance(result, dict):
+                    if result.get("warning"):
+                        fallback_used = True
                     signals.append({
                         "Currency": cur,
                         "Current Rate": result['current_rate'],
@@ -558,6 +571,8 @@ with tabs[4]:
                         "Prophet Signal": result['prophet_signal']
                     })
         if signals:
+            if fallback_used:
+                st.warning("Some forecasts use a rough estimate because historical data is insufficient. Keep the dashboard running to build history.")
             df_signals = pd.DataFrame(signals)
             def highlight_signal(val):
                 if val == 'BUY':
@@ -569,13 +584,13 @@ with tabs[4]:
         else:
             st.warning("No signals generated.")
 
-# Strategy Config
+# --- Strategy Config tab ---
 with tabs[5]:
     st.markdown("<div class='section-title'>⚙️ Strategy Configuration</div>", unsafe_allow_html=True)
     risk_level = st.slider("Risk Level", 1, 10, 5)
     st.info("Risk level will be used in future trading logic.")
 
-# Logs
+# --- Logs tab ---
 with tabs[6]:
     st.markdown("<div class='section-title'>📋 Application Logs</div>", unsafe_allow_html=True)
     try:
@@ -584,7 +599,7 @@ with tabs[6]:
     except FileNotFoundError:
         st.info("No logs yet.")
 
-# Model Testing
+# --- Model Testing tab ---
 with tabs[7]:
     st.markdown("<div class='section-title'>🧪 Model Testing</div>", unsafe_allow_html=True)
     st.warning("⚠️ Only upload trusted .pkl files.")
@@ -600,7 +615,7 @@ with tabs[7]:
             ax.plot(test_results.get("predictions", []), marker="o")
             st.pyplot(fig)
 
-# Debug
+# --- Debug tab ---
 with tabs[8]:
     st.markdown("<div class='section-title'>🛠️ Debug</div>", unsafe_allow_html=True)
     st.json({k: str(v) if not isinstance(v, (dict, list, int, float, bool, type(None))) else v for k, v in st.session_state.items()})
