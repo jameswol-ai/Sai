@@ -1,195 +1,264 @@
 # =========================================================
-# SAI Forex Bot – CLEAN STABLE ARCHITECTURE BUILD
+# RANDOM + SAI FUSION SYSTEM
+# Autonomous Architecture OS + Forex Intelligence Engine
+# Single-File Streamlit Mega App
 # =========================================================
 
 import streamlit as st
 import threading
 import time
 import logging
-from logging.handlers import RotatingFileHandler
-import matplotlib.pyplot as plt
-import pandas as pd
-import random
-import pickle
-from datetime import datetime, timedelta
-from collections import deque
-import queue
-import numpy as np
-import requests
-import os
-import warnings
 import sqlite3
-from typing import Dict, List, Optional, Any, Tuple
+import json
+import uuid
+import random
+import queue
+import os
+import requests
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from datetime import datetime, timedelta
+from pathlib import Path
+from collections import deque
 
 # =========================================================
-# PAGE CONFIG (ONLY ONCE)
+# OPTIONAL MODULES
 # =========================================================
-st.set_page_config(page_title="SAI Forex Bot", layout="wide")
 
-# =========================================================
-# LOGGER (MUST BE FIRST – FIXED CRASH SOURCE)
-# =========================================================
-logger = logging.getLogger("sai_app")
-logger.setLevel(logging.INFO)
-
-handler = RotatingFileHandler("sai_app.log", maxBytes=2_000_000, backupCount=3)
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-handler.setFormatter(formatter)
-
-if not logger.handlers:
-    logger.addHandler(handler)
-
-# =========================================================
-# OPTIONAL IMPORTS (SAFE MODE)
-# =========================================================
 try:
     import plotly.graph_objects as go
     import plotly.express as px
     from plotly.subplots import make_subplots
-    PLOTLY_AVAILABLE = True
+    PLOTLY = True
 except:
-    PLOTLY_AVAILABLE = False
+    PLOTLY = False
 
 try:
-    from newsapi import NewsApiClient
-    from textblob import TextBlob
-    SENTIMENT_AVAILABLE = True
+    from statsmodels.tsa.arima.model import ARIMA
+    ARIMA_OK = True
 except:
-    SENTIMENT_AVAILABLE = False
-
-try:
-    from streamlit_autorefresh import st_autorefresh
-    AUTOREFRESH_AVAILABLE = True
-except:
-    AUTOREFRESH_AVAILABLE = False
+    ARIMA_OK = False
 
 # =========================================================
-# GLOBAL STATE
+# APP CONFIG
 # =========================================================
-BOT_CONFIG = {
-    "alert_errors": False,
-    "lock": threading.Lock()
+
+st.set_page_config(page_title="RANDOM × SAI Fusion OS", layout="wide")
+
+st.markdown("""
+<style>
+body {background-color:#0E1117;}
+.section {font-size:20px;color:#00F2FE;font-weight:700;margin-top:20px;}
+.card {
+    background:#1E1E2F;padding:15px;border-radius:12px;margin:10px 0;
+    border:1px solid rgba(255,255,255,0.08);
 }
-
-DB_PATH = "sai_trading.db"
-DB_LOCK = threading.Lock()
-
-ALL_CURRENCIES = ["UGX","KES","TZS","RWF","BIF","SSP","ETB","USD","EUR","GBP","JPY"]
-EAST_AFRICAN_CURRENCIES = ["UGX","KES","TZS","RWF","BIF","SSP","ETB"]
+</style>
+""", unsafe_allow_html=True)
 
 # =========================================================
-# DB INIT
+# GLOBAL MEMORY
 # =========================================================
-def db_connect():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+
+DB = "fusion.db"
+
+def db():
+    conn = sqlite3.connect(DB, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
 def init_db():
-    conn = db_connect()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            time TEXT,
-            currency TEXT,
-            rate REAL,
-            forecast REAL
-        );
+    c = db()
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS forex(time TEXT, symbol TEXT, rate REAL);
+    CREATE TABLE IF NOT EXISTS logs(time TEXT, msg TEXT);
     """)
-    conn.commit()
-    conn.close()
+    c.commit()
+    c.close()
+
+init_db()
 
 # =========================================================
-# SAFE RATE ENGINE
+# RANDOM CORE ENGINE (SIMPLIFIED)
 # =========================================================
-@st.cache_data(ttl=5)
-def get_real_rates():
-    try:
-        url = "https://api.frankfurter.app/latest?from=USD&to=" + ",".join(ALL_CURRENCIES)
-        r = requests.get(url, timeout=5)
-        data = r.json()
-        rates = data.get("rates", {})
-        rates["USD"] = 1.0
-        return rates
-    except Exception as e:
-        logger.warning(f"Rate fetch failed: {e}")
-        return {}
 
-def sample_rates():
-    return {c: round(random.uniform(1, 1000), 2) for c in ALL_CURRENCIES}
-
-# =========================================================
-# LIVE STATE
-# =========================================================
-if "live" not in st.session_state:
-    st.session_state.live = {"rates": {}, "prev": {}, "lock": threading.Lock()}
-
-def live_fetch():
-    while True:
-        rates = get_real_rates() or sample_rates()
-        with st.session_state.live["lock"]:
-            st.session_state.live["prev"] = st.session_state.live["rates"]
-            st.session_state.live["rates"] = rates
-        time.sleep(3)
-
-if "thread_started" not in st.session_state:
-    t = threading.Thread(target=live_fetch, daemon=True)
-    t.start()
-    st.session_state.thread_started = True
-
-def get_rates():
-    with st.session_state.live["lock"]:
-        return (
-            st.session_state.live["rates"],
-            st.session_state.live["prev"]
-        )
-
-# =========================================================
-# BOT SIMULATION (SAFE)
-# =========================================================
-def run_bot():
+def random_architecture_generator():
     return {
-        "time": datetime.now().isoformat(),
-        "trade": random.choice(["BUY","SELL"]),
-        "symbol": random.choice(ALL_CURRENCIES),
-        "amount": random.randint(100,5000)
+        "id": str(uuid.uuid4())[:8],
+        "nodes": random.randint(5, 20),
+        "complexity": random.choice(["low", "medium", "high"]),
+        "structure": random.choice(["mesh", "tree", "hybrid"]),
+        "score": round(random.uniform(0, 1), 3)
     }
 
 # =========================================================
-# UI
+# SAI FOREX ENGINE (CORE SIMPLIFIED)
 # =========================================================
-st.title("📊 SAI Forex Bot (Clean Core)")
 
-rates, prev = get_rates()
+CURRENCIES = ["UGX","KES","TZS","RWF","BIF","SSP","ETB","USD","EUR","GBP","JPY"]
 
-cols = st.columns(4)
+def fake_rates():
+    base = {
+        "UGX": random.uniform(3700, 3900),
+        "KES": random.uniform(125, 140),
+        "TZS": random.uniform(2500, 2700),
+        "USD": 1,
+        "EUR": random.uniform(0.9, 1.1),
+        "GBP": random.uniform(0.75, 0.85)
+    }
+    return base
 
-for i, c in enumerate(EAST_AFRICAN_CURRENCIES):
-    with cols[i % 4]:
-        r = rates.get(c, 0)
-        p = prev.get(c, r)
-        delta = ((r - p) / p * 100) if p else 0
+def store_rates(rates):
+    c = db()
+    for k,v in rates.items():
+        c.execute("INSERT INTO forex VALUES (?,?,?)",
+                  (datetime.now().isoformat(), k, float(v)))
+    c.commit()
+    c.close()
 
-        st.metric(
-            label=f"USD/{c}",
-            value=f"{r:.2f}",
-            delta=f"{delta:.2f}%"
-        )
-
-st.markdown("---")
+def load_history(symbol):
+    conn = db()
+    df = pd.read_sql("SELECT * FROM forex WHERE symbol=? ORDER BY time ASC", conn, params=(symbol,))
+    conn.close()
+    return df
 
 # =========================================================
-# SIMPLE BOT TRIGGER
+# FORECAST (LIGHTWEIGHT)
 # =========================================================
-if st.button("Run Bot Tick"):
-    result = run_bot()
-    st.json(result)
+
+def forecast(series, steps=5):
+    if len(series) < 5:
+        return [series[-1] if len(series)>0 else 1]*steps
+    trend = np.polyfit(range(len(series)), series, 1)[0]
+    last = series[-1]
+    return [last + trend*(i+1) for i in range(steps)]
 
 # =========================================================
-# DEBUG
+# BOT LOOP
 # =========================================================
-with st.expander("Debug State"):
-    st.json({
-        "rates": rates,
-        "prev": prev
-    })
+
+bot_queue = queue.Queue()
+stop_event = threading.Event()
+
+def bot_loop():
+    while not stop_event.is_set():
+        try:
+            rates = fake_rates()
+            store_rates(rates)
+            bot_queue.put({"time":datetime.now().isoformat(),"rates":rates})
+        except Exception as e:
+            bot_queue.put({"error":str(e)})
+        time.sleep(2)
+
+def start_bot():
+    if "thread" not in st.session_state:
+        t = threading.Thread(target=bot_loop, daemon=True)
+        st.session_state.thread = t
+        t.start()
+
+def stop_bot():
+    stop_event.set()
+
+# =========================================================
+# UI CORE
+# =========================================================
+
+st.title("🧬 RANDOM × 📈 SAI Fusion Intelligence System")
+
+tabs = st.tabs(["🌐 Dashboard","🧠 Random Core","📈 Forex Engine","📊 Forecast","⚙️ Logs"])
+
+# =========================================================
+# DASHBOARD
+# =========================================================
+
+with tabs[0]:
+    st.markdown("<div class='section'>Live System Status</div>", unsafe_allow_html=True)
+
+    col1,col2,col3 = st.columns(3)
+
+    col1.metric("System Mode", "FUSION ACTIVE")
+    col2.metric("Bot Queue Size", bot_queue.qsize())
+    col3.metric("Threads", threading.active_count())
+
+    if st.button("Start Engine"):
+        start_bot()
+        st.success("Engine started")
+
+    if st.button("Stop Engine"):
+        stop_bot()
+        st.warning("Stopping engine...")
+
+    st.markdown("### Live Feed")
+    items = []
+    while not bot_queue.empty():
+        items.append(bot_queue.get())
+
+    st.json(items[-5:])
+
+# =========================================================
+# RANDOM CORE
+# =========================================================
+
+with tabs[1]:
+    st.markdown("<div class='section'>Random Architecture Generator</div>", unsafe_allow_html=True)
+
+    if st.button("Generate Architecture"):
+        arch = random_architecture_generator()
+        st.json(arch)
+
+# =========================================================
+# FOREX ENGINE
+# =========================================================
+
+with tabs[2]:
+    st.markdown("<div class='section'>Forex Engine</div>", unsafe_allow_html=True)
+
+    rates = fake_rates()
+
+    for k,v in rates.items():
+        st.markdown(f"""
+        <div class='card'>
+        <b>{k}</b> : {v:.4f}
+        </div>
+        """, unsafe_allow_html=True)
+
+# =========================================================
+# FORECAST ENGINE
+# =========================================================
+
+with tabs[3]:
+    st.markdown("<div class='section'>Forecast Engine</div>", unsafe_allow_html=True)
+
+    sym = st.selectbox("Currency", CURRENCIES)
+
+    hist = load_history(sym)
+    if len(hist) > 0:
+        series = hist["rate"].tolist()
+        preds = forecast(series, steps=5)
+
+        st.write("Prediction:", preds)
+
+        if PLOTLY:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(y=series, name="History"))
+            fig.add_trace(go.Scatter(y=preds, name="Forecast"))
+            st.plotly_chart(fig)
+        else:
+            plt.plot(series)
+            plt.plot(range(len(series), len(series)+len(preds)), preds)
+            st.pyplot(plt)
+
+# =========================================================
+# LOGS
+# =========================================================
+
+with tabs[4]:
+    st.markdown("<div class='section'>System Logs</div>", unsafe_allow_html=True)
+
+    conn = db()
+    logs = conn.execute("SELECT * FROM logs ORDER BY time DESC LIMIT 50").fetchall()
+    conn.close()
+
+    st.write(logs)
