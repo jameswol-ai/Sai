@@ -1,53 +1,11 @@
-import numpy as np
-from newsapi import NewsApiClient
-from textblob import TextBlob
-import streamlit as st
-import logging
+result = get_news_sentiment("BTC")
 
-logger = logging.getLogger("sai_app.sentiment")
+if result["status"] == "ok":
+    st.success(result["message"])
+    st.metric("News Sentiment", f"{result['score']:.2f}")
 
-def fetch_news_sentiment():
-    try:
-        api_key = st.secrets.get("NEWS_API_KEY")
-        if not api_key:
-            return None
-        api = NewsApiClient(api_key=api_key)
-        query = ("East Africa forex OR Uganda shilling OR Kenya shilling OR Tanzania shilling "
-                 "OR Rwanda franc OR Burundi franc OR South Sudan pound OR Ethiopia birr")
-        articles = api.get_everything(q=query, language='en', sort_by='publishedAt', page_size=10)
-        if articles['status'] != 'ok':
-            return None
-        sentiments = []
-        headlines = []
-        for art in articles['articles']:
-            text = art['title'] + " " + (art['description'] or "")
-            blob = TextBlob(text)
-            sentiments.append(blob.sentiment.polarity)
-            headlines.append(art['title'])
-        avg_sent = np.mean(sentiments) if sentiments else 0
-        return {
-            "score": round(avg_sent, 3),
-            "headlines": headlines[:5],
-            "interpretation": "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
-        }
-    except Exception as e:
-        logger.error(f"News sentiment error: {e}")
-        return None
+elif result["status"] == "disabled":
+    st.info(result["message"])
 
-
-try:
-    from newsapi import NewsApiClient
-    from textblob import TextBlob
-
-    api_key = os.getenv("NEWS_API_KEY")
-
-    if api_key:
-        newsapi = NewsApiClient(api_key=api_key)
-        # Run sentiment analysis
-    else:
-        st.info("News API key not configured. Sentiment analysis disabled.")
-
-except ImportError:
-    st.info("newsapi-python or textblob is not installed. Sentiment analysis disabled.")
-except Exception as e:
-    st.warning(f"News sentiment error: {e}")
+else:
+    st.warning(result["message"])
