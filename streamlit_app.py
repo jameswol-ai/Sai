@@ -1181,7 +1181,7 @@ with tabs[5]:
     if auto_trade and st.button("Run Auto‑Trade Now"):
         st.info("Auto‑trade logic is a placeholder. Extend by calling run_forecast and placing orders.")
 
-# ============== TECHNICAL ANALYSIS (NEW FULL TAB) ==============
+# ============== TECHNICAL ANALYSIS ==============
 with tabs[6]:
     st.markdown("<div class='section-title'>📉 Technical Analysis</div>", unsafe_allow_html=True)
     ta_currency = st.selectbox("Currency", EAST_AFRICAN_CURRENCIES, key="ta_cur")
