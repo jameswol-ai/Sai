@@ -19,8 +19,7 @@ import os
 import warnings
 import sqlite3
 from typing import Dict, List, Optional, Any, Tuple
-pip install newsapi-python textblob
-python -m textblob.download_corpora
+
 # -------------------- Optional Plotly --------------------
 try:
     import plotly.graph_objects as go
