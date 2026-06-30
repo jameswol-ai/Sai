@@ -20,6 +20,32 @@ import warnings
 import sqlite3
 from typing import Dict, List, Optional, Any, Tuple
 
+──────────────────────────────
+        SAI Intelligence
+──────────────────────────────
+
+Market Status
+🟢 Bullish
+
+Confidence
+87%
+
+Latest Headlines
+🟢 Fed signals slower rate cuts
+🔴 Oil prices jump after supply concerns
+🟢 NVIDIA beats earnings estimates
+
+Upcoming Events
+⏰ US CPI
+⏰ ECB Decision
+⏰ Non-Farm Payrolls
+
+Risk Meter
+████████░░ 80%
+
+AI Recommendation
+BUY
+
 # -------------------- Optional Plotly --------------------
 try:
     import plotly.graph_objects as go
