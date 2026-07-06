@@ -2,7 +2,7 @@ import streamlit as st
 import threading, time, queue, pandas as pd, numpy as np, matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 from collections import deque
-import plotly.graph_objects as go
+
 from plotly.subplots import make_subplots
 import plotly.express as px
 
