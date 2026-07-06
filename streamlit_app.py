@@ -1558,3 +1558,11 @@ with tabs[9]:
                 st.dataframe(pd.DataFrame(result["trades"]))
             else:
                 st.info("No trades executed during this period.")
+
+# Optional dependencies – hide warnings unless debugging
+if not PLOTLY_AVAILABLE:
+    logger.warning("Plotly not installed – interactive charts disabled.")
+if not SENTIMENT_AVAILABLE:
+    logger.warning("newsapi/textblob not installed – news sentiment disabled.")
+if not AUTOREFRESH_AVAILABLE:
+    logger.warning("streamlit-autorefresh not installed – auto‑refresh disabled.")
