@@ -7,7 +7,6 @@ from data.live_feed import start_live_stream, get_current_rates, update_history
 from data.database import (init_db, load_account, load_history, load_bot_logs, load_positions, load_orders,
                            download_history_csv, DB_PATH, DB_LOCK, db_connect)
 from models.backtest import backtest_strategy
-from trading.bot import start_bot, stop_bot, drain_bot_queue
 from trading.api import get_trading_api, SimulatedTrading
 from trading.signals import generate_trade_signal
 from utils.indicators import compute_indicators
