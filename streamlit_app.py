@@ -20,6 +20,19 @@ import warnings
 import sqlite3
 from typing import Dict, List, Optional, Any, Tuple
 
+import logging
+from logging.handlers import RotatingFileHandler
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        RotatingFileHandler("sai_app.log", maxBytes=5*1024*1024, backupCount=2),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # -------------------- Optional Plotly --------------------
 try:
     import plotly.graph_objects as go
