@@ -1012,6 +1012,29 @@ def backtest_strategy(currency: str, df_full: pd.DataFrame, strategy: str,
         "final_balance": balance
     }
 
+def load_model(file_obj):
+    """
+    Load a pickled model from an uploaded file object.
+    Only use .pkl files you trust.
+    """
+    try:
+        model = pickle.load(file_obj)
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {e}")
+        return None
+
+def test_model(model):
+    """
+    Run a dummy evaluation of the loaded model.
+    Replace this with real inference logic on your test data.
+    """
+    # Simulate some predictions (normally you'd call model.predict(test_data))
+    rng = np.random.default_rng(42)
+    predictions = list(rng.normal(0, 1, 10))
+    accuracy = round(rng.uniform(0.6, 0.95), 4)
+    return {"predictions": predictions, "accuracy": accuracy}
+
 # -------------------- Streamlit UI --------------------
 st.set_page_config(page_title="SAI Forex Bot – Enhanced", layout="wide")
 
