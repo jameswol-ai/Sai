@@ -3,7 +3,7 @@ import threading, time, queue, pandas as pd, numpy as np, matplotlib.pyplot as p
 from datetime import datetime, timedelta
 from collections import deque
 
-from plotly.subplots import make_subplots
+
 import plotly.express as px
 
 from config import logger, defaults, BOT_CONFIG, EAST_AFRICAN_CURRENCIES, CUSTOM_CSS
