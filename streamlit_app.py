@@ -1,5 +1,5 @@
 # =========================================================
-# SAI Forex Bot – Mobile‑Friendly & Fully Fixed (Sidebar Overlay Fixed)
+# SAI Forex Bot – Merged & Fixed (All Features, Sound, PnL Ticker)
 # =========================================================
 import streamlit as st
 import threading
@@ -68,7 +68,7 @@ BOT_CONFIG = {
     "lock": threading.Lock()
 }
 
-# -------------------- Custom CSS (Enhanced, Mobile‑Friendly, Sidebar Fix) --------------------
+# -------------------- Custom CSS (Enhanced & Attractive) --------------------
 st.markdown("""
 <style>
     .main {
@@ -187,57 +187,12 @@ st.markdown("""
         70% { box-shadow: 0 0 0 10px rgba(0,200,83,0); }
         100% { box-shadow: 0 0 0 0 rgba(0,200,83,0); }
     }
-
-    /* ========== MOBILE FRIENDLY + SIDEBAR FIX ========== */
     @media (max-width: 768px) {
-        div[data-testid="column"] {
-            flex: 1 1 100% !important;
-            min-width: 100% !important;
-        }
-        .forex-card {
-            padding: 16px;
-            margin: 6px 0;
-        }
-        .rate-value {
-            font-size: 2rem;
-        }
-        .currency-pair {
-            font-size: 1.1rem;
-        }
-        .section-title {
-            font-size: 1.4rem;
-        }
-        .stButton > button {
-            padding: 14px 28px;
-            font-size: 1.1rem;
-            border-radius: 14px;
-        }
-        .stTabs [data-baseweb="tab"] {
-            padding: 6px 10px;
-            font-size: 0.8rem;
-        }
-        /* Sidebar as overlay with 80% width so main content remains partially visible */
-        [data-testid="stSidebar"] {
-            min-width: 80% !important;
-            max-width: 80% !important;
-        }
-    }
-
-    @media (max-width: 480px) {
-        .rate-value {
-            font-size: 1.6rem;
-        }
-        h1 {
-            font-size: 1.8rem !important;
-        }
-        .stButton > button {
-            padding: 12px 20px;
-            font-size: 1rem;
-        }
-        [data-testid="stSidebar"] {
-            min-width: 90% !important;
-            max-width: 90% !important;
-        }
+        .forex-card { padding: 12px; margin: 4px 0; }
+        .rate-value { font-size: 1.8rem; }
+        .currency-pair { font-size: 1rem; }
+        .section-title { font-size: 1.3rem; }
+        .stButton > button { padding: 10px 20px; font-size: 0.9rem; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -285,11 +240,12 @@ def fit_auto_arima(series: pd.Series) -> Dict[str, Any]:
         return fit_arima(series)
 
 def forecast_next(arima_model: Dict[str, Any], steps: int = 1) -> Tuple[List[float], Optional[np.ndarray]]:
+    """Return forecasts and confidence intervals if available."""
     if arima_model.get("fitted") and arima_model["model"] is not None:
         try:
             fc_result = arima_model["model"].get_forecast(steps=steps)
             pred = fc_result.predicted_mean.tolist()
-            conf_int = fc_result.conf_int()
+            conf_int = fc_result.conf_int()  # returns DataFrame
             return pred, conf_int.values if conf_int is not None else None
         except Exception as e:
             logger.warning(f"ARIMA forecast failed ({e}), using stub.")
@@ -318,6 +274,7 @@ def fit_prophet(df_rates: pd.DataFrame) -> Dict[str, Any]:
         return {"last_date": df["ds"].max(), "slope": slope, "last_y": last_y, "fitted": False}
 
 def forecast_future(prophet_model: Dict[str, Any], periods: int = 1, freq: str = "D") -> Tuple[pd.DataFrame, Optional[Any]]:
+    """Return forecasts and possibly full forecast dataframe with intervals."""
     if prophet_model.get("fitted"):
         try:
             future = prophet_model["model"].make_future_dataframe(periods=periods, freq=freq)
@@ -348,18 +305,31 @@ def compute_metrics(actual: np.ndarray, predicted: np.ndarray) -> Dict[str, Opti
 
 # -------------------- Trade signal logic --------------------
 def compute_trade_signal(rates_df: pd.DataFrame, risk_level: int) -> Optional[Dict]:
+    """
+    Strategy: SMA20 > SMA50 and RSI < 30 → BUY, SMA20 < SMA50 and RSI > 70 → SELL.
+    Returns trade dict or None.
+    """
     if len(rates_df) < 50:
         return None
     close = rates_df["Rate"].astype(float)
     sma20 = close.rolling(20).mean().iloc[-1]
     sma50 = close.rolling(50).mean().iloc[-1]
+    # RSI 14
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     avg_gain = gain.rolling(14).mean().iloc[-1]
     avg_loss = loss.rolling(14).mean().iloc[-1]
-    rsi = 100.0 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
-    trade = "BUY" if sma20 > sma50 and rsi < 30 else "SELL" if sma20 < sma50 and rsi > 70 else None
+    if avg_loss == 0:
+        rsi = 100.0
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+    trade = None
+    if sma20 > sma50 and rsi < 30:
+        trade = "BUY"
+    elif sma20 < sma50 and rsi > 70:
+        trade = "SELL"
     if trade:
         risk_fraction = risk_level / 100.0
         amount = int(1000 * risk_fraction) if risk_fraction else 1000
@@ -369,6 +339,7 @@ def compute_trade_signal(rates_df: pd.DataFrame, risk_level: int) -> Optional[Di
 
 # -------------------- Sound Alert --------------------
 def play_sound(file_path="alert.mp3"):
+    """Play an audio file in the browser. Does nothing if file not found."""
     try:
         with open(file_path, "rb") as f:
             data = f.read()
@@ -382,44 +353,60 @@ def play_sound(file_path="alert.mp3"):
             unsafe_allow_html=True,
         )
     except FileNotFoundError:
-        pass
+        pass  # no sound file, skip silently
 
-# -------------------- Multi‑currency Bot Loop --------------------
+# -------------------- UPDATED: Bot simulation → Real Trading Loop (Multi‑currency) --------------------
 def run_bot():
+    """
+    Called by the bot thread. Scans all available currencies and returns
+    a list of trade signals (or empty list). Executes trades if auto_trade is on.
+    """
     with st.session_state.live_rates_lock:
         rates = st.session_state.live_rates_data.get("rates", {})
     if not rates:
         return []
+
     df_hist = st.session_state.history
     if df_hist is None or df_hist.empty:
         return []
+
     available = [c for c in EAST_AFRICAN_CURRENCIES if c in rates]
     if not available:
         return []
+
     signals = []
+
     for cur in available:
         cur_data = df_hist[df_hist["Currency"] == cur].tail(100).copy()
         cur_data["Time_dt"] = pd.to_datetime(cur_data["Time"])
         cur_data = cur_data.sort_values("Time_dt")
+
         if len(cur_data) < 50:
             continue
+
         trade_signal = compute_trade_signal(cur_data, st.session_state.risk_level)
         if trade_signal:
             trade_signal["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             trade_signal["amount"] = max(100, trade_signal["amount"])
             signals.append(trade_signal)
+
             if st.session_state.auto_trade:
                 trading_api = get_trading_api()
                 try:
                     units = trade_signal["amount"] if trade_signal["trade"] == "BUY" else -trade_signal["amount"]
-                    trading_api.place_order(symbol=trade_signal["symbol"], units=units)
-                    play_sound()
+                    trading_api.place_order(
+                        symbol=trade_signal["symbol"],
+                        units=units
+                    )
+                    play_sound()   # 🔊 Audio alert on trade execution
                     logger.info(f"Bot auto‑trade: {trade_signal}")
                 except Exception as e:
                     logger.error(f"Bot trade failed for {cur}: {e}")
                     trade_signal["error"] = str(e)
+
     return signals
 
+# -------------------- UPDATED: Bot loop now handles list of signals --------------------
 def bot_loop(queue_obj, stop_event):
     logger.info("Bot thread started.")
     while not stop_event.is_set():
@@ -429,6 +416,7 @@ def bot_loop(queue_obj, stop_event):
                 queue_obj.put(trade_info)
                 with BOT_CONFIG["lock"]:
                     if BOT_CONFIG.get("alert_signals"):
+                        thresh = st.session_state.alert_threshold
                         if trade_info["trade"] in ("BUY", "SELL"):
                             send_telegram(
                                 f"🤖 Bot signal: {trade_info['trade']} {trade_info['symbol']} "
@@ -1135,7 +1123,7 @@ def backtest_strategy(currency: str, df_full: pd.DataFrame, strategy: str,
         "final_balance": balance
     }
 
-# -------------------- Model Loading & Testing --------------------
+# -------------------- Model Loading & Testing (fix Model Testing tab) --------------------
 def load_model(file_obj):
     try:
         model = pickle.load(file_obj)
