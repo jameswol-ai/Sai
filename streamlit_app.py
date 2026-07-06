@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from collections import deque
 
 
-import plotly.express as px
+
 
 from config import logger, defaults, BOT_CONFIG, EAST_AFRICAN_CURRENCIES, CUSTOM_CSS
 from data.live_feed import start_live_stream, get_current_rates, update_history
