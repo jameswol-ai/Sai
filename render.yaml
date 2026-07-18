@@ -1,0 +1,19 @@
+# Exported from Render on 2026-07-18T17:52:03Z
+version: "1"
+projects:
+- name: sai
+  environments:
+  - name: Sai
+    services:
+    - type: web
+      name: sai.ai
+      runtime: docker
+      repo: https://github.com/jameswol-ai/sai
+      plan: free
+      envVars:
+      - key: Sai
+        sync: false
+      region: oregon
+      dockerContext: .
+      dockerfilePath: ./Dockerfile
+      autoDeployTrigger: commit
