@@ -1,37 +1,25 @@
 # ============================================================
-# SAI AI Forex Trading Bot – Full Featured Dashboard
-# Merged: PART 4/4 + v3.0 + All 8 Enhancements
+# SAI AI Forex Trading Bot – Full Production Dashboard
+# PostgreSQL + Dark Mode + Live Bot + All Features
 # ============================================================
-
-import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-
-# Get database URL from environment (Render will set this)
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    # Fallback for local testing (replace with your own if needed)
-    DATABASE_URL = "postgresql://postgres:yourpassword@localhost:5432/postgres"
-
-def connect_db():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import sqlite3
 import hashlib
 import random
 import time
 import threading
 import queue
-from pathlib import Path
+import os
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # ============================================================
-# PAGE CONFIG (theming is set later with dark mode toggle)
+# PAGE CONFIG
 # ============================================================
 st.set_page_config(
     page_title="SAI AI Forex Bot",
@@ -40,57 +28,60 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-BASE_DIR = Path(__file__).parent
-USER_DB = BASE_DIR / "sai_users.db"
-TRADE_DB = BASE_DIR / "sai_trading.db"
+# ============================================================
+# DATABASE CONNECTION (PostgreSQL via Supabase / Render)
+# ============================================================
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    # Fallback for local testing – replace with your own if needed
+    DATABASE_URL = "postgresql://postgres:password@localhost:5432/sai"
 
-# ============================================================
-# DATABASE SETUP
-# ============================================================
-def connect(db_path):
-    return sqlite3.connect(db_path, check_same_thread=False)
+def connect_db():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def init_database():
-    conn = connect(USER_DB)
-    conn.execute("""
+    conn = connect_db()
+    cur = conn.cursor()
+    # Create tables if not exist
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS users(
             username TEXT PRIMARY KEY,
             password TEXT,
             role TEXT
         )
     """)
-    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if count == 0:
-        conn.execute(
-            "INSERT INTO users VALUES(?,?,?)",
-            ("admin", hash_password("admin123"), "admin")
-        )
-    conn.commit()
-    conn.close()
-
-    conn = connect(TRADE_DB)
-    conn.executescript("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS trades(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             username TEXT,
             time TEXT,
             symbol TEXT,
             action TEXT,
             price REAL,
             pnl REAL
-        );
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS balance(
             username TEXT PRIMARY KEY,
             amount REAL
-        );
+        )
     """)
-    # Ensure admin balance exists
-    cur = conn.execute("SELECT amount FROM balance WHERE username='admin'")
-    if cur.fetchone() is None:
-        conn.execute("INSERT INTO balance VALUES(?,?)", ("admin", 10000.0))
+    # Insert default admin if no users exist
+    cur.execute("SELECT COUNT(*) FROM users")
+    count = cur.fetchone()["count"]
+    if count == 0:
+        cur.execute(
+            "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
+            ("admin", hash_password("admin123"), "admin")
+        )
+        cur.execute(
+            "INSERT INTO balance (username, amount) VALUES (%s, %s)",
+            ("admin", 10000.0)
+        )
     conn.commit()
     conn.close()
 
@@ -100,42 +91,48 @@ init_database()
 # USER SYSTEM
 # ============================================================
 def login(username, password):
-    conn = connect(USER_DB)
-    row = conn.execute(
-        "SELECT role FROM users WHERE username=? AND password=?",
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT role FROM users WHERE username=%s AND password=%s",
         (username, hash_password(password))
-    ).fetchone()
+    )
+    row = cur.fetchone()
     conn.close()
     if row:
-        return True, row[0]
+        return True, row["role"]
     return False, None
 
 def register(username, password):
     try:
-        conn = connect(USER_DB)
-        conn.execute(
-            "INSERT INTO users VALUES(?,?,?)",
+        conn = connect_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
             (username, hash_password(password), "user")
+        )
+        # create starting balance
+        cur.execute(
+            "INSERT INTO balance (username, amount) VALUES (%s, %s)",
+            (username, 10000.0)
         )
         conn.commit()
         conn.close()
-        conn = connect(TRADE_DB)
-        conn.execute("INSERT OR IGNORE INTO balance VALUES(?,?)", (username, 10000.0))
-        conn.commit()
-        conn.close()
         return True
-    except:
+    except Exception as e:
         return False
 
 def change_password(username, old_password, new_password):
-    conn = connect(USER_DB)
-    row = conn.execute(
-        "SELECT username FROM users WHERE username=? AND password=?",
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT username FROM users WHERE username=%s AND password=%s",
         (username, hash_password(old_password))
-    ).fetchone()
+    )
+    row = cur.fetchone()
     if row:
-        conn.execute(
-            "UPDATE users SET password=? WHERE username=?",
+        cur.execute(
+            "UPDATE users SET password=%s WHERE username=%s",
             (hash_password(new_password), username)
         )
         conn.commit()
@@ -145,7 +142,7 @@ def change_password(username, old_password, new_password):
     return False
 
 def get_users():
-    conn = connect(USER_DB)
+    conn = connect_db()
     df = pd.read_sql("SELECT username, role FROM users", conn)
     conn.close()
     return df
@@ -153,13 +150,11 @@ def get_users():
 def remove_user(username):
     if username == "admin":
         return False
-    conn = connect(USER_DB)
-    conn.execute("DELETE FROM users WHERE username=?", (username,))
-    conn.commit()
-    conn.close()
-    conn = connect(TRADE_DB)
-    conn.execute("DELETE FROM balance WHERE username=?", (username,))
-    conn.execute("DELETE FROM trades WHERE username=?", (username,))
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE username=%s", (username,))
+    cur.execute("DELETE FROM balance WHERE username=%s", (username,))
+    cur.execute("DELETE FROM trades WHERE username=%s", (username,))
     conn.commit()
     conn.close()
     return True
@@ -187,83 +182,55 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ============================================================
-# DARK MODE CSS INJECTION
+# DARK MODE CSS
 # ============================================================
 if st.session_state.dark_mode:
     dark_css = """
     <style>
-        body {
-            background-color: #0e1117;
-            color: #fafafa;
-        }
-        .stApp {
-            background-color: #0e1117;
-        }
-        .css-1d391kg, .css-12oz5g7 {
-            background-color: #0e1117;
-        }
-        header, footer {
-            background-color: #0e1117;
-        }
-        .stMetric {
-            background-color: #262730;
-        }
+        body { background-color: #0e1117; color: #fafafa; }
+        .stApp { background-color: #0e1117; }
+        .stMetric { background-color: #262730; }
     </style>
     """
     st.markdown(dark_css, unsafe_allow_html=True)
 
 # ============================================================
-# CURRENCY & MARKET (simulated)
+# MARKET & AI ENGINE (simulated)
 # ============================================================
 CURRENCIES = {
-    "UGX": 3800,
-    "KES": 130,
-    "TZS": 2600,
-    "SSP": 1600,
-    "RWF": 1350,
-    "USD": 1,
-    "EUR": 0.92
+    "UGX": 3800, "KES": 130, "TZS": 2600,
+    "SSP": 1600, "RWF": 1350, "USD": 1, "EUR": 0.92
 }
 
 def get_market():
     data = {}
-    for currency, base in CURRENCIES.items():
-        data[currency] = round(base + random.uniform(-5, 5), 2)
+    for c, base in CURRENCIES.items():
+        data[c] = round(base + random.uniform(-5, 5), 2)
     return data
 
 def save_market(prices):
     pass
 
-# ============================================================
-# AI ENGINE with multiple strategies
-# ============================================================
 def run_ai(prices, strategy="Scalper"):
     results = {}
     for currency, rate in prices.items():
-        # Different RSI ranges per strategy
         if strategy == "Scalper":
             rsi = round(random.uniform(30, 70), 1)
-            threshold_buy = 45
-            threshold_sell = 55
+            th_b, th_s = 45, 55
         elif strategy == "Trend":
             rsi = round(random.uniform(20, 80), 1)
-            threshold_buy = 35
-            threshold_sell = 65
-        elif strategy == "Breakout":
+            th_b, th_s = 35, 65
+        else:  # Breakout
             rsi = round(random.uniform(25, 75), 1)
-            threshold_buy = 40
-            threshold_sell = 60
-        else:
-            rsi = round(random.uniform(30, 70), 1)
-            threshold_buy = 45
-            threshold_sell = 55
+            th_b, th_s = 40, 60
 
-        if rsi < threshold_buy:
+        if rsi < th_b:
             signal = "BUY"
-        elif rsi > threshold_sell:
+        elif rsi > th_s:
             signal = "SELL"
         else:
             signal = random.choice(["BUY", "SELL", "HOLD"])
+
         confidence = round(random.uniform(50, 99), 1)
         forecast = round(rate + random.uniform(-3, 3), 2)
         results[currency] = {
@@ -292,71 +259,67 @@ def load_ai_memory():
 # ============================================================
 def get_account():
     username = st.session_state.username
-    conn = connect(TRADE_DB)
-    row = conn.execute("SELECT amount FROM balance WHERE username=?", (username,)).fetchone()
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute("SELECT amount FROM balance WHERE username=%s", (username,))
+    row = cur.fetchone()
     conn.close()
     if row:
-        st.session_state.balance = row[0]
+        st.session_state.balance = row["amount"]
     return {"balance": st.session_state.balance}
 
 def execute_trade(symbol, action, price):
     username = st.session_state.username
-    # PnL simulation depends on action and a bit of randomness
-    if action == "BUY":
-        pnl = random.uniform(-30, 80)
-    else:
-        pnl = random.uniform(-30, 80)
+    pnl = random.uniform(-30, 80)
 
-    # Apply risk percentage (capital at risk per trade)
+    # Apply risk scaling
     risk_amount = (st.session_state.risk / 100) * st.session_state.balance
-    pnl = pnl * (risk_amount / 100)  # scaled but not too drastic
-    # Ensure PnL doesn't wipe the account
+    pnl = pnl * (risk_amount / 100)
     new_balance = st.session_state.balance + pnl
     if new_balance < 0:
         pnl = -st.session_state.balance
         new_balance = 0
 
-    conn = connect(TRADE_DB)
-    conn.execute(
-        "UPDATE balance SET amount=? WHERE username=?",
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE balance SET amount=%s WHERE username=%s",
         (new_balance, username)
     )
-    conn.execute(
-        "INSERT INTO trades(username, time, symbol, action, price, pnl) VALUES(?,?,?,?,?,?)",
+    cur.execute(
+        "INSERT INTO trades(username, time, symbol, action, price, pnl) VALUES(%s,%s,%s,%s,%s,%s)",
         (username, datetime.now().isoformat(), symbol, action, price, pnl)
     )
     conn.commit()
     conn.close()
+
     st.session_state.balance = new_balance
     return pnl
 
 def get_trade_history():
-    conn = connect(TRADE_DB)
+    conn = connect_db()
     df = pd.read_sql(
-        "SELECT * FROM trades WHERE username=? ORDER BY id DESC",
-        conn,
-        params=[st.session_state.username]
+        "SELECT * FROM trades WHERE username=%s ORDER BY id DESC",
+        conn, params=[st.session_state.username]
     )
     conn.close()
     return df
 
 def system_status():
     return {
-        "app_version": "6.1",
+        "app_version": "6.2",
         "bot_running": st.session_state.bot_running,
         "auto_trade": st.session_state.auto_trade,
         "risk_level": st.session_state.risk,
         "strategy": st.session_state.strategy,
         "dark_mode": st.session_state.dark_mode,
         "live_feed": st.session_state.live_feed,
-        "time": datetime.now().isoformat(),
-        "database": str(TRADE_DB)
+        "time": datetime.now().isoformat()
     }
 
 # ============================================================
-# BOT BACKGROUND THREAD (auto‑trading)
+# AUTO‑TRADING BOT (background thread)
 # ============================================================
-# Global signal queue (thread‑safe)
 signal_queue = queue.Queue()
 bot_settings = {
     "bot_running": False,
@@ -377,35 +340,29 @@ def bot_loop():
             time.sleep(2)
             continue
 
-        # Simulate AI decision
         prices = get_market()
         ai_results = run_ai(prices, strategy)
         for currency, data in ai_results.items():
-            if data["signal"] in ("BUY", "SELL") and random.random() < 0.3:  # simulate few trades
+            if data["signal"] in ("BUY", "SELL") and random.random() < 0.3:
                 signal_queue.put({
                     "symbol": currency,
                     "action": data["signal"],
                     "price": prices[currency]
                 })
-        time.sleep(5)  # check every 5 seconds
+        time.sleep(5)
 
-# Start bot thread once
+# Start the bot thread once
 if "bot_thread" not in st.session_state:
     bot_thread = threading.Thread(target=bot_loop, daemon=True)
     bot_thread.start()
     st.session_state.bot_thread = True
 
-# ============================================================
-# PROCESS BOT SIGNALS (called each rerun)
-# ============================================================
 def process_bot_signals():
     while not signal_queue.empty():
         trade = signal_queue.get()
         execute_trade(trade["symbol"], trade["action"], trade["price"])
-        # Simulated alert
         if st.session_state.alerts_enabled:
-            # Placeholder: print or store to log
-            st.toast(f"Bot traded {trade['action']} {trade['symbol']} @ {trade['price']}")
+            st.toast(f"Bot: {trade['action']} {trade['symbol']} @ {trade['price']}")
 
 # ============================================================
 # LOGIN PAGE
@@ -424,11 +381,7 @@ if not st.session_state.logged:
                 st.session_state.username = user
                 st.session_state.role = role
                 # Load balance
-                conn = connect(TRADE_DB)
-                row = conn.execute("SELECT amount FROM balance WHERE username=?", (user,)).fetchone()
-                if row:
-                    st.session_state.balance = row[0]
-                conn.close()
+                get_account()
                 st.rerun()
             else:
                 st.error("Invalid credentials")
@@ -443,9 +396,7 @@ if not st.session_state.logged:
                 st.error("Username already exists")
     st.stop()
 
-# ============================================================
-# PROCESS BOT QUEUE NOW (before UI)
-# ============================================================
+# Process bot signals before UI
 process_bot_signals()
 
 # ============================================================
@@ -466,11 +417,12 @@ with st.sidebar:
     st.session_state.risk = st.slider("Risk Level %", 1, 20, st.session_state.risk)
     st.session_state.auto_trade = st.checkbox("Enable AI Auto Trading", value=st.session_state.auto_trade)
 
-    # AI strategy selector
+    # AI strategy
+    strategies = ["Scalper", "Trend", "Breakout"]
     st.session_state.strategy = st.selectbox(
         "AI Strategy",
-        ["Scalper", "Trend", "Breakout"],
-        index=["Scalper", "Trend", "Breakout"].index(st.session_state.strategy)
+        strategies,
+        index=strategies.index(st.session_state.strategy) if st.session_state.strategy in strategies else 0
     )
 
     # Password change
@@ -489,7 +441,7 @@ with st.sidebar:
                 else:
                     st.error("Old password incorrect")
 
-    # Bot controls
+    # Bot start/stop
     col1, col2 = st.columns(2)
     with col1:
         if st.button("▶ Start"):
@@ -515,7 +467,6 @@ with st.sidebar:
         st.subheader("👥 Users")
         user_df = get_users()
         st.dataframe(user_df, hide_index=True, use_container_width=True)
-
         delete_name = st.selectbox(
             "Delete User",
             user_df["username"].tolist() if not user_df.empty else []
@@ -529,7 +480,6 @@ with st.sidebar:
                 st.error("Cannot delete admin")
 
     if st.button("🚪 Logout"):
-        # Stop bot before logout
         with bot_lock:
             bot_settings["bot_running"] = False
             bot_settings["auto_trade"] = False
@@ -546,7 +496,6 @@ st.caption("AI Market Brain | East Africa Currency Intelligence")
 # ACCOUNT METRICS
 # ============================================================
 account = get_account()
-# Read pending signals count
 signals_count = signal_queue.qsize()
 
 m1, m2, m3, m4 = st.columns(4)
@@ -569,7 +518,7 @@ tabs = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# MARKET TAB (with live feed toggle)
+# MARKET TAB
 # ---------------------------------------------------------
 with tabs[0]:
     st.subheader("🌍 Live Market")
@@ -583,7 +532,6 @@ with tabs[0]:
 
     market_df = pd.DataFrame({"Currency": list(prices.keys()), "Rate": list(prices.values())})
     st.dataframe(market_df, hide_index=True)
-
     fig = px.bar(market_df, x="Currency", y="Rate", title="Currency Rates")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -644,7 +592,7 @@ with tabs[3]:
         st.success(f"Trade completed | PnL ${pnl:.2f}")
 
 # ---------------------------------------------------------
-# HISTORY TAB (with PnL chart and CSV export)
+# HISTORY TAB
 # ---------------------------------------------------------
 with tabs[4]:
     st.subheader("📜 Trade History")
@@ -675,7 +623,7 @@ with tabs[4]:
         )
 
 # ---------------------------------------------------------
-# AI MEMORY TAB (placeholder)
+# AI MEMORY TAB
 # ---------------------------------------------------------
 with tabs[5]:
     st.subheader("🧬 AI Memory Database")
@@ -683,7 +631,7 @@ with tabs[5]:
     st.dataframe(memory, hide_index=True, use_container_width=True)
 
 # ---------------------------------------------------------
-# SYSTEM TAB (alerts configuration)
+# SYSTEM TAB
 # ---------------------------------------------------------
 with tabs[6]:
     st.subheader("⚙ System Diagnostics")
@@ -700,10 +648,10 @@ with tabs[6]:
 # FOOTER
 # ============================================================
 st.divider()
-st.caption("SAI AI Forex Intelligence v6.1 | Autonomous Trading Simulation | All features active")
+st.caption("SAI AI Forex Intelligence v6.2 | Production Ready | PostgreSQL + Live Bot")
 
 # ============================================================
-# LIVE FEED AUTO-REFRESH
+# LIVE FEED AUTO‑REFRESH
 # ============================================================
 if st.session_state.live_feed:
     time.sleep(2)
