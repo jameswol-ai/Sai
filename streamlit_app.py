@@ -1,6 +1,6 @@
 # ============================================================
-# SAI AI Forex Trading Bot - Full Streamlit Dashboard
-# Merged Version: UI from PART 4/4 + Backend from v3.0
+# SAI AI Forex Trading Bot – Full Featured Dashboard
+# Merged: PART 4/4 + v3.0 + All 8 Enhancements
 # ============================================================
 
 import streamlit as st
@@ -10,18 +10,21 @@ import sqlite3
 import hashlib
 import random
 import time
+import threading
+import queue
 from pathlib import Path
 from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIG (theming is set later with dark mode toggle)
 # ============================================================
 st.set_page_config(
     page_title="SAI AI Forex Bot",
     page_icon="📈",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 BASE_DIR = Path(__file__).parent
@@ -71,7 +74,7 @@ def init_database():
             amount REAL
         );
     """)
-    # Initialize balance for admin if not exist
+    # Ensure admin balance exists
     cur = conn.execute("SELECT amount FROM balance WHERE username='admin'")
     if cur.fetchone() is None:
         conn.execute("INSERT INTO balance VALUES(?,?)", ("admin", 10000.0))
@@ -103,7 +106,6 @@ def register(username, password):
         )
         conn.commit()
         conn.close()
-        # also create a default balance
         conn = connect(TRADE_DB)
         conn.execute("INSERT OR IGNORE INTO balance VALUES(?,?)", (username, 10000.0))
         conn.commit()
@@ -111,6 +113,23 @@ def register(username, password):
         return True
     except:
         return False
+
+def change_password(username, old_password, new_password):
+    conn = connect(USER_DB)
+    row = conn.execute(
+        "SELECT username FROM users WHERE username=? AND password=?",
+        (username, hash_password(old_password))
+    ).fetchone()
+    if row:
+        conn.execute(
+            "UPDATE users SET password=? WHERE username=?",
+            (hash_password(new_password), username)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    conn.close()
+    return False
 
 def get_users():
     conn = connect(USER_DB)
@@ -143,15 +162,45 @@ defaults = {
     "risk": 2,
     "auto_trade": False,
     "balance": 10000.0,
-    "trades": [],
-    "signals": []
+    "dark_mode": False,
+    "live_feed": False,
+    "strategy": "Scalper",
+    "alerts_enabled": False,
+    "alert_email": "",
+    "alert_telegram": ""
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ============================================================
-# CURRENCY CONFIG
+# DARK MODE CSS INJECTION
+# ============================================================
+if st.session_state.dark_mode:
+    dark_css = """
+    <style>
+        body {
+            background-color: #0e1117;
+            color: #fafafa;
+        }
+        .stApp {
+            background-color: #0e1117;
+        }
+        .css-1d391kg, .css-12oz5g7 {
+            background-color: #0e1117;
+        }
+        header, footer {
+            background-color: #0e1117;
+        }
+        .stMetric {
+            background-color: #262730;
+        }
+    </style>
+    """
+    st.markdown(dark_css, unsafe_allow_html=True)
+
+# ============================================================
+# CURRENCY & MARKET (simulated)
 # ============================================================
 CURRENCIES = {
     "UGX": 3800,
@@ -164,27 +213,41 @@ CURRENCIES = {
 }
 
 def get_market():
-    """Return live market rates (simulated)."""
     data = {}
     for currency, base in CURRENCIES.items():
         data[currency] = round(base + random.uniform(-5, 5), 2)
     return data
 
 def save_market(prices):
-    # Placeholder: in production would save to a time-series DB
     pass
 
 # ============================================================
-# AI ENGINE (SIMULATED)
+# AI ENGINE with multiple strategies
 # ============================================================
-def run_ai(prices):
-    """Return AI analysis for each currency."""
+def run_ai(prices, strategy="Scalper"):
     results = {}
     for currency, rate in prices.items():
-        rsi = round(random.uniform(20, 80), 1)
-        if rsi < 30:
+        # Different RSI ranges per strategy
+        if strategy == "Scalper":
+            rsi = round(random.uniform(30, 70), 1)
+            threshold_buy = 45
+            threshold_sell = 55
+        elif strategy == "Trend":
+            rsi = round(random.uniform(20, 80), 1)
+            threshold_buy = 35
+            threshold_sell = 65
+        elif strategy == "Breakout":
+            rsi = round(random.uniform(25, 75), 1)
+            threshold_buy = 40
+            threshold_sell = 60
+        else:
+            rsi = round(random.uniform(30, 70), 1)
+            threshold_buy = 45
+            threshold_sell = 55
+
+        if rsi < threshold_buy:
             signal = "BUY"
-        elif rsi > 70:
+        elif rsi > threshold_sell:
             signal = "SELL"
         else:
             signal = random.choice(["BUY", "SELL", "HOLD"])
@@ -199,7 +262,6 @@ def run_ai(prices):
     return results
 
 def forecast_currency(currency, days):
-    """Return a list of forecasted rates for the given number of days."""
     current = CURRENCIES.get(currency, 1)
     forecast = []
     value = current
@@ -209,19 +271,13 @@ def forecast_currency(currency, days):
         forecast.append(round(value, 2))
     return forecast
 
-def read_bot_queue():
-    """Read pending signals from the AI bot queue (simulated)."""
-    return st.session_state.signals
-
 def load_ai_memory():
-    """Return a DataFrame of AI memory (dummy)."""
     return pd.DataFrame(columns=["timestamp", "event", "data"])
 
 # ============================================================
 # TRADING SYSTEM
 # ============================================================
 def get_account():
-    """Get the current user's balance."""
     username = st.session_state.username
     conn = connect(TRADE_DB)
     row = conn.execute("SELECT amount FROM balance WHERE username=?", (username,)).fetchone()
@@ -231,13 +287,21 @@ def get_account():
     return {"balance": st.session_state.balance}
 
 def execute_trade(symbol, action, price):
-    """Execute a trade and return PnL (simulated)."""
     username = st.session_state.username
-    pnl = random.uniform(-30, 80) if action == "BUY" else random.uniform(-30, 80)
+    # PnL simulation depends on action and a bit of randomness
+    if action == "BUY":
+        pnl = random.uniform(-30, 80)
+    else:
+        pnl = random.uniform(-30, 80)
 
-    # Update balance
+    # Apply risk percentage (capital at risk per trade)
+    risk_amount = (st.session_state.risk / 100) * st.session_state.balance
+    pnl = pnl * (risk_amount / 100)  # scaled but not too drastic
+    # Ensure PnL doesn't wipe the account
     new_balance = st.session_state.balance + pnl
-    st.session_state.balance = new_balance
+    if new_balance < 0:
+        pnl = -st.session_state.balance
+        new_balance = 0
 
     conn = connect(TRADE_DB)
     conn.execute(
@@ -250,10 +314,10 @@ def execute_trade(symbol, action, price):
     )
     conn.commit()
     conn.close()
+    st.session_state.balance = new_balance
     return pnl
 
 def get_trade_history():
-    """Return trade history for the current user."""
     conn = connect(TRADE_DB)
     df = pd.read_sql(
         "SELECT * FROM trades WHERE username=? ORDER BY id DESC",
@@ -265,23 +329,70 @@ def get_trade_history():
 
 def system_status():
     return {
-        "app_version": "6.0",
+        "app_version": "6.1",
         "bot_running": st.session_state.bot_running,
         "auto_trade": st.session_state.auto_trade,
         "risk_level": st.session_state.risk,
+        "strategy": st.session_state.strategy,
+        "dark_mode": st.session_state.dark_mode,
+        "live_feed": st.session_state.live_feed,
         "time": datetime.now().isoformat(),
         "database": str(TRADE_DB)
     }
 
 # ============================================================
-# BOT CONTROL (SIMULATED)
+# BOT BACKGROUND THREAD (auto‑trading)
 # ============================================================
-def start_bot():
-    st.session_state.bot_running = True
-    # In a real app, you would start a background thread here
+# Global signal queue (thread‑safe)
+signal_queue = queue.Queue()
+bot_settings = {
+    "bot_running": False,
+    "auto_trade": False,
+    "risk": 2,
+    "strategy": "Scalper"
+}
+bot_lock = threading.Lock()
 
-def stop_bot():
-    st.session_state.bot_running = False
+def bot_loop():
+    while True:
+        with bot_lock:
+            running = bot_settings["bot_running"]
+            auto_trade = bot_settings["auto_trade"]
+            risk = bot_settings["risk"]
+            strategy = bot_settings["strategy"]
+        if not running or not auto_trade:
+            time.sleep(2)
+            continue
+
+        # Simulate AI decision
+        prices = get_market()
+        ai_results = run_ai(prices, strategy)
+        for currency, data in ai_results.items():
+            if data["signal"] in ("BUY", "SELL") and random.random() < 0.3:  # simulate few trades
+                signal_queue.put({
+                    "symbol": currency,
+                    "action": data["signal"],
+                    "price": prices[currency]
+                })
+        time.sleep(5)  # check every 5 seconds
+
+# Start bot thread once
+if "bot_thread" not in st.session_state:
+    bot_thread = threading.Thread(target=bot_loop, daemon=True)
+    bot_thread.start()
+    st.session_state.bot_thread = True
+
+# ============================================================
+# PROCESS BOT SIGNALS (called each rerun)
+# ============================================================
+def process_bot_signals():
+    while not signal_queue.empty():
+        trade = signal_queue.get()
+        execute_trade(trade["symbol"], trade["action"], trade["price"])
+        # Simulated alert
+        if st.session_state.alerts_enabled:
+            # Placeholder: print or store to log
+            st.toast(f"Bot traded {trade['action']} {trade['symbol']} @ {trade['price']}")
 
 # ============================================================
 # LOGIN PAGE
@@ -320,6 +431,11 @@ if not st.session_state.logged:
     st.stop()
 
 # ============================================================
+# PROCESS BOT QUEUE NOW (before UI)
+# ============================================================
+process_bot_signals()
+
+# ============================================================
 # SIDEBAR CONTROL CENTER
 # ============================================================
 with st.sidebar:
@@ -328,19 +444,60 @@ with st.sidebar:
     st.write(f"Role: {st.session_state.role}")
     st.divider()
 
+    # Dark mode toggle
+    dark = st.checkbox("🌙 Dark Mode", value=st.session_state.dark_mode)
+    if dark != st.session_state.dark_mode:
+        st.session_state.dark_mode = dark
+        st.rerun()
+
     st.session_state.risk = st.slider("Risk Level %", 1, 20, st.session_state.risk)
     st.session_state.auto_trade = st.checkbox("Enable AI Auto Trading", value=st.session_state.auto_trade)
 
+    # AI strategy selector
+    st.session_state.strategy = st.selectbox(
+        "AI Strategy",
+        ["Scalper", "Trend", "Breakout"],
+        index=["Scalper", "Trend", "Breakout"].index(st.session_state.strategy)
+    )
+
+    # Password change
+    with st.expander("🔑 Change Password"):
+        old = st.text_input("Old Password", type="password")
+        new1 = st.text_input("New Password", type="password")
+        new2 = st.text_input("Confirm New Password", type="password")
+        if st.button("Update Password"):
+            if new1 != new2:
+                st.error("Passwords do not match")
+            elif not old or not new1:
+                st.error("Fill all fields")
+            else:
+                if change_password(st.session_state.username, old, new1):
+                    st.success("Password updated")
+                else:
+                    st.error("Old password incorrect")
+
+    # Bot controls
     col1, col2 = st.columns(2)
     with col1:
         if st.button("▶ Start"):
-            start_bot()
+            with bot_lock:
+                bot_settings["bot_running"] = True
+                bot_settings["auto_trade"] = st.session_state.auto_trade
+                bot_settings["risk"] = st.session_state.risk
+                bot_settings["strategy"] = st.session_state.strategy
+            st.session_state.bot_running = True
+            st.rerun()
     with col2:
         if st.button("⏹ Stop"):
-            stop_bot()
+            with bot_lock:
+                bot_settings["bot_running"] = False
+                bot_settings["auto_trade"] = False
+            st.session_state.bot_running = False
+            st.rerun()
 
     st.divider()
 
+    # Admin user management
     if st.session_state.role == "admin":
         st.subheader("👥 Users")
         user_df = get_users()
@@ -359,6 +516,10 @@ with st.sidebar:
                 st.error("Cannot delete admin")
 
     if st.button("🚪 Logout"):
+        # Stop bot before logout
+        with bot_lock:
+            bot_settings["bot_running"] = False
+            bot_settings["auto_trade"] = False
         st.session_state.clear()
         st.rerun()
 
@@ -372,13 +533,14 @@ st.caption("AI Market Brain | East Africa Currency Intelligence")
 # ACCOUNT METRICS
 # ============================================================
 account = get_account()
-signals = read_bot_queue()
+# Read pending signals count
+signals_count = signal_queue.qsize()
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Balance", f"${account['balance']:,.2f}")
 m2.metric("Bot Status", "RUNNING" if st.session_state.bot_running else "STOPPED")
 m3.metric("Risk", f"{st.session_state.risk}%")
-m4.metric("Signals", len(signals))
+m4.metric("Signals", signals_count)
 
 # ============================================================
 # DASHBOARD TABS
@@ -394,10 +556,15 @@ tabs = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# MARKET TAB
+# MARKET TAB (with live feed toggle)
 # ---------------------------------------------------------
 with tabs[0]:
     st.subheader("🌍 Live Market")
+    live = st.checkbox("🔄 Enable Live Feed (refreshes every 2s)", value=st.session_state.live_feed)
+    if live != st.session_state.live_feed:
+        st.session_state.live_feed = live
+        st.rerun()
+
     prices = get_market()
     save_market(prices)
 
@@ -407,13 +574,16 @@ with tabs[0]:
     fig = px.bar(market_df, x="Currency", y="Rate", title="Currency Rates")
     st.plotly_chart(fig, use_container_width=True)
 
+    if live:
+        st.caption("Live feed active – page will auto‑refresh every 2 seconds.")
+
 # ---------------------------------------------------------
 # AI BRAIN TAB
 # ---------------------------------------------------------
 with tabs[1]:
     st.subheader("🧠 SAI AI Decision Brain")
     prices = get_market()
-    results = run_ai(prices)
+    results = run_ai(prices, st.session_state.strategy)
 
     rows = []
     for currency, data in results.items():
@@ -461,7 +631,7 @@ with tabs[3]:
         st.success(f"Trade completed | PnL ${pnl:.2f}")
 
 # ---------------------------------------------------------
-# HISTORY TAB
+# HISTORY TAB (with PnL chart and CSV export)
 # ---------------------------------------------------------
 with tabs[4]:
     st.subheader("📜 Trade History")
@@ -469,11 +639,30 @@ with tabs[4]:
     st.dataframe(history, hide_index=True, use_container_width=True)
 
     if not history.empty:
-        st.metric("Total Trades", len(history))
-        st.metric("Total PnL", f"${history['pnl'].sum():.2f}")
+        col_h1, col_h2 = st.columns(2)
+        with col_h1:
+            st.metric("Total Trades", len(history))
+        with col_h2:
+            st.metric("Total PnL", f"${history['pnl'].sum():.2f}")
+
+        # Cumulative PnL chart
+        history_sorted = history.sort_values("id")
+        history_sorted["Cumulative PnL"] = history_sorted["pnl"].cumsum()
+        fig_pnl = px.line(history_sorted, x="id", y="Cumulative PnL",
+                          title="Cumulative Profit / Loss")
+        st.plotly_chart(fig_pnl, use_container_width=True)
+
+        # Export CSV
+        csv = history.to_csv(index=False).encode()
+        st.download_button(
+            label="📥 Export Trade History (CSV)",
+            data=csv,
+            file_name=f"trade_history_{st.session_state.username}.csv",
+            mime="text/csv"
+        )
 
 # ---------------------------------------------------------
-# AI MEMORY TAB
+# AI MEMORY TAB (placeholder)
 # ---------------------------------------------------------
 with tabs[5]:
     st.subheader("🧬 AI Memory Database")
@@ -481,14 +670,28 @@ with tabs[5]:
     st.dataframe(memory, hide_index=True, use_container_width=True)
 
 # ---------------------------------------------------------
-# SYSTEM TAB
+# SYSTEM TAB (alerts configuration)
 # ---------------------------------------------------------
 with tabs[6]:
     st.subheader("⚙ System Diagnostics")
     st.json(system_status())
 
+    st.subheader("📬 Alert Settings")
+    st.session_state.alerts_enabled = st.checkbox("Enable Trade Alerts", value=st.session_state.alerts_enabled)
+    if st.session_state.alerts_enabled:
+        st.session_state.alert_email = st.text_input("Email address (for alerts)", value=st.session_state.alert_email)
+        st.session_state.alert_telegram = st.text_input("Telegram chat ID (optional)", value=st.session_state.alert_telegram)
+        st.caption("Alerts are simulated via toast notifications. Real SMTP/Telegram integration requires additional configuration.")
+
 # ============================================================
 # FOOTER
 # ============================================================
 st.divider()
-st.caption("SAI AI Forex Intelligence v6.0 | Autonomous Trading Simulation")
+st.caption("SAI AI Forex Intelligence v6.1 | Autonomous Trading Simulation | All features active")
+
+# ============================================================
+# LIVE FEED AUTO-REFRESH
+# ============================================================
+if st.session_state.live_feed:
+    time.sleep(2)
+    st.rerun()
