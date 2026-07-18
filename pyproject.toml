@@ -1,2 +1,17 @@
-[tool.vercel]
-entrypoint = "api:app"
+[project]
+name = "sai-ai-trading-bot"
+version = "0.1.0"
+description = "SAI Autonomous AI Trading System"
+requires-python = ">=3.10"
+
+dependencies = [
+    "streamlit",
+    "flask",
+    "gunicorn",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "joblib",
+    "requests",
+    "plotly"
+]
