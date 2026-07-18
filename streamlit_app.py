@@ -1,7 +1,7 @@
 # ============================================================
-# SAI AI Forex Bot v5.0
-# Single File Streamlit Edition
-# Login + User Management + AI Trading Dashboard
+# SAI AI Forex Intelligence v6.0
+# FULL SINGLE FILE STREAMLIT EDITION
+# PART 1/4
 # ============================================================
 
 import streamlit as st
@@ -51,15 +51,27 @@ logger = logging.getLogger("SAI")
 
 
 # ============================================================
-# OPTIONAL PLOTLY
+# OPTIONAL CHARTS
 # ============================================================
 
 try:
     import plotly.graph_objects as go
-    PLOTLY = True
+    PLOTLY_AVAILABLE = True
 
 except Exception:
-    PLOTLY = False
+
+    PLOTLY_AVAILABLE = False
+
+
+
+# ============================================================
+# GLOBAL THREAD SAFE QUEUE
+# ============================================================
+
+BOT_QUEUE = queue.Queue()
+
+BOT_THREAD = None
+BOT_STOP_EVENT = None
 
 
 
@@ -84,32 +96,69 @@ def hash_password(password):
 
 
 
+# ============================================================
+# DATABASE INITIALIZATION + MIGRATION
+# ============================================================
+
 def init_databases():
 
-    conn = db(USER_DB)
+    # ---------------- USER DATABASE ----------------
+
+    conn=db(USER_DB)
+
 
     conn.execute("""
     CREATE TABLE IF NOT EXISTS users(
 
         username TEXT PRIMARY KEY,
-        password TEXT,
-        role TEXT,
-        email TEXT
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        email TEXT DEFAULT ''
 
     )
     """)
 
 
-    count = conn.execute(
+    columns=[
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(users)"
+        ).fetchall()
+    ]
+
+
+    if "role" not in columns:
+
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"
+        )
+
+
+    if "email" not in columns:
+
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''"
+        )
+
+
+
+    count=conn.execute(
         "SELECT COUNT(*) FROM users"
     ).fetchone()[0]
 
 
-    if count == 0:
+
+    if count==0:
 
         conn.execute(
             """
             INSERT INTO users
+            (
+            username,
+            password,
+            role,
+            email
+            )
             VALUES(?,?,?,?)
             """,
             (
@@ -121,12 +170,17 @@ def init_databases():
         )
 
 
+
     conn.commit()
     conn.close()
 
 
 
-    conn = db(TRADING_DB)
+    # ---------------- TRADING DATABASE ----------------
+
+
+    conn=db(TRADING_DB)
+
 
 
     conn.executescript("""
@@ -166,7 +220,9 @@ def init_databases():
     """)
 
 
+
     conn.commit()
+
     conn.close()
 
 
@@ -182,6 +238,7 @@ init_databases()
 def authenticate(username,password):
 
     conn=db(USER_DB)
+
 
     row=conn.execute(
         """
@@ -210,15 +267,23 @@ def authenticate(username,password):
 
 
 
+
 def register(username,password,email=""):
 
     try:
 
         conn=db(USER_DB)
 
+
         conn.execute(
             """
             INSERT INTO users
+            (
+            username,
+            password,
+            role,
+            email
+            )
             VALUES(?,?,?,?)
             """,
             (
@@ -231,33 +296,77 @@ def register(username,password,email=""):
 
 
         conn.commit()
+
         conn.close()
+
 
         return True
 
 
-    except Exception:
+    except Exception as e:
+
+        logger.error(e)
 
         return False
 
 
 
 
+
+
 def users():
+
 
     conn=db(USER_DB)
 
-    data=pd.read_sql(
-        """
-        SELECT username,role,email
-        FROM users
-        """,
-        conn
-    )
+
+    try:
+
+
+        df=pd.read_sql_query(
+            """
+            SELECT
+
+            username,
+
+            COALESCE(role,'user') AS role,
+
+            COALESCE(email,'') AS email
+
+
+            FROM users
+
+            ORDER BY username
+
+            """,
+            conn
+        )
+
+
+    except Exception as e:
+
+
+        logger.error(
+            f"Users table error {e}"
+        )
+
+
+        df=pd.DataFrame(
+            columns=[
+                "username",
+                "role",
+                "email"
+            ]
+        )
+
+
 
     conn.close()
 
-    return data
+
+    return df
+
+
 
 
 
@@ -265,12 +374,18 @@ def delete_user(username):
 
     conn=db(USER_DB)
 
+
     conn.execute(
-        "DELETE FROM users WHERE username=?",
+        """
+        DELETE FROM users
+        WHERE username=?
+        """,
         (username,)
     )
 
+
     conn.commit()
+
     conn.close()
 
 
@@ -281,28 +396,26 @@ def delete_user(username):
 
 defaults={
 
+
     "login":False,
 
     "username":"",
+
     "role":"",
 
     "balance":10000.0,
 
-    "bot_running":False,
-
-    "auto_trade":False,
+    "equity":10000.0,
 
     "risk":5,
 
+    "auto_trade":False,
+
+    "bot_running":False,
+
     "signals":[],
 
-    "history":[],
-
-    "bot_queue":queue.Queue(),
-
-    "thread":None,
-
-    "stop":None
+    "history":[]
 
 }
 
@@ -317,18 +430,18 @@ for key,value in defaults.items():
 
 
 # ============================================================
-# LOGIN UI
+# LOGIN SCREEN
 # ============================================================
 
 def login_screen():
 
 
     st.title(
-        "🔐 SAI AI Forex Login"
+        "🔐 SAI AI Forex Intelligence"
     )
 
 
-    tab1,tab2=st.tabs(
+    login_tab,register_tab=st.tabs(
         [
             "Login",
             "Register"
@@ -336,10 +449,11 @@ def login_screen():
     )
 
 
-    with tab1:
+
+    with login_tab:
 
 
-        user=st.text_input(
+        username=st.text_input(
             "Username"
         )
 
@@ -350,22 +464,27 @@ def login_screen():
         )
 
 
-        if st.button("Login"):
+
+        if st.button(
+            "Login"
+        ):
 
 
             ok,role=authenticate(
-                user,
+                username,
                 password
             )
 
 
             if ok:
 
+
                 st.session_state.login=True
 
-                st.session_state.username=user
+                st.session_state.username=username
 
                 st.session_state.role=role
+
 
                 st.rerun()
 
@@ -373,21 +492,21 @@ def login_screen():
             else:
 
                 st.error(
-                    "Invalid login"
+                    "Invalid username/password"
                 )
 
 
 
-    with tab2:
+    with register_tab:
 
 
         new_user=st.text_input(
-            "New username"
+            "New Username"
         )
 
 
         new_pass=st.text_input(
-            "New password",
+            "New Password",
             type="password"
         )
 
@@ -397,8 +516,9 @@ def login_screen():
         )
 
 
+
         if st.button(
-            "Create account"
+            "Create Account"
         ):
 
 
@@ -412,11 +532,13 @@ def login_screen():
                     "Account created"
                 )
 
+
             else:
 
                 st.error(
-                    "Username already exists"
+                    "Username exists"
                 )
+
 
 
 
@@ -426,43 +548,50 @@ if not st.session_state.login:
 
     st.stop()
 
-
 # ============================================================
-# END PART 1
-# ============================================================
-
-# ============================================================
-# MARKET ENGINE
+# PART 2/4
+# MARKET + AI ENGINE + TRADING CORE
 # ============================================================
 
+
+# ============================================================
+# CURRENCY DATABASE
+# ============================================================
 
 CURRENCIES = {
 
-    "UGX":3800,
-    "KES":130,
-    "TZS":2600,
-    "RWF":1350,
-    "BIF":2900,
-    "SSP":1600,
-    "ETB":57,
-    "USD":1,
-    "EUR":0.92,
-    "GBP":0.78,
-    "JPY":145
+    "UGX": 3800,
+    "KES": 130,
+    "TZS": 2600,
+    "RWF": 1350,
+    "BIF": 2900,
+    "SSP": 1600,
+    "ETB": 57,
+    "USD": 1,
+    "EUR": 0.92,
+    "GBP": 0.78,
+    "JPY": 145
 
 }
 
 
 
+# ============================================================
+# MARKET ENGINE
+# ============================================================
+
 def simulated_market():
 
     prices={}
 
+
     for currency,value in CURRENCIES.items():
+
 
         if currency=="USD":
 
             prices[currency]=1
+
 
         else:
 
@@ -471,26 +600,35 @@ def simulated_market():
                 0.01
             )
 
+
             prices[currency]=round(
+
                 value+(value*movement),
+
                 2
+
             )
+
 
     return prices
 
 
 
 
-@st.cache_data(
-    ttl=10
-)
+
+@st.cache_data(ttl=15)
 def live_market():
+
 
     try:
 
+
         url=(
-            "https://api.frankfurter.app/latest"
-            "?from=USD&to=EUR,GBP,JPY"
+
+        "https://api.frankfurter.app/latest"
+
+        "?from=USD&to=EUR,GBP,JPY"
+
         )
 
 
@@ -502,24 +640,27 @@ def live_market():
 
         data=response.json()
 
-        rates=data.get(
+
+        external=data.get(
             "rates",
             {}
         )
 
 
-        rates["USD"]=1
+        external["USD"]=1
 
 
         local=simulated_market()
 
 
-        for k,v in rates.items():
+        for k,v in external.items():
 
             local[k]=v
 
 
+
         return local
+
 
 
     except Exception:
@@ -531,61 +672,98 @@ def live_market():
 
 
 # ============================================================
-# MARKET HISTORY DATABASE
+# MARKET DATABASE
 # ============================================================
 
-
 def save_market(prices):
+
 
     conn=db(TRADING_DB)
 
 
+
     for currency,rate in prices.items():
+
 
         conn.execute(
             """
             INSERT INTO market
-            VALUES(
-            NULL,?,?,?,?
+            (
+            username,
+            time,
+            currency,
+            rate
             )
+            VALUES(?,?,?,?)
             """,
             (
-                st.session_state.username,
-                datetime.now().isoformat(),
-                currency,
-                rate
+
+            st.session_state.username,
+
+            datetime.now().isoformat(),
+
+            currency,
+
+            rate
+
             )
         )
 
 
+
     conn.commit()
+
     conn.close()
+
 
 
 
 
 def load_market(currency):
 
+
     conn=db(TRADING_DB)
 
 
-    df=pd.read_sql(
+    df=pd.read_sql_query(
+
         """
-        SELECT time,rate
+
+        SELECT
+
+        time,
+
+        rate
+
+
         FROM market
+
+
         WHERE username=?
+
         AND currency=?
+
+
         ORDER BY id
+
+
         """,
+
         conn,
+
         params=(
+
             st.session_state.username,
+
             currency
+
         )
+
     )
 
 
     conn.close()
+
 
 
     if not df.empty:
@@ -599,16 +777,20 @@ def load_market(currency):
 
 
 
+
+
 # ============================================================
-# AI SIGNAL ENGINE
+# AI ANALYSIS FUNCTIONS
 # ============================================================
 
 
 def moving_average(values,period):
 
+
     if len(values)<period:
 
         return None
+
 
     return np.mean(
         values[-period:]
@@ -617,35 +799,41 @@ def moving_average(values,period):
 
 
 
+
+
 def calculate_rsi(values,period=14):
+
 
     if len(values)<=period:
 
         return 50
 
 
-    delta=np.diff(values)
+
+    changes=np.diff(values)
 
 
-    gain=np.maximum(
-        delta,
+
+    gains=np.maximum(
+        changes,
         0
     )
 
 
-    loss=np.maximum(
-        -delta,
+    losses=np.maximum(
+        -changes,
         0
     )
+
 
 
     avg_gain=np.mean(
-        gain[-period:]
+        gains[-period:]
     )
 
 
     avg_loss=np.mean(
-        loss[-period:]
+        losses[-period:]
     )
 
 
@@ -654,13 +842,18 @@ def calculate_rsi(values,period=14):
         return 100
 
 
+
     rs=avg_gain/avg_loss
 
 
-    return (
-        100 -
-        (100/(1+rs))
+    return round(
+
+        100-(100/(1+rs)),
+
+        2
+
     )
+
 
 
 
@@ -675,13 +868,19 @@ def ai_predict(currency):
 
     if history.empty:
 
+
         return {
 
             "signal":"HOLD",
+
             "confidence":0,
-            "forecast":None
+
+            "forecast":None,
+
+            "rsi":50
 
         }
+
 
 
 
@@ -691,6 +890,7 @@ def ai_predict(currency):
 
 
     current=prices[-1]
+
 
 
     sma20=moving_average(
@@ -710,7 +910,9 @@ def ai_predict(currency):
     )
 
 
+
     score=0
+
 
 
     if sma20 and sma50:
@@ -731,38 +933,45 @@ def ai_predict(currency):
         score+=30
 
 
+
     elif rsi>70:
 
         score-=30
 
 
 
+
     score+=random.randint(
-        -20,
-        20
+        -15,
+        15
     )
+
 
 
 
     if score>30:
 
-        action="BUY"
+        signal="BUY"
 
 
     elif score<-30:
 
-        action="SELL"
+        signal="SELL"
 
 
     else:
 
-        action="HOLD"
+        signal="HOLD"
+
 
 
 
     confidence=min(
+
         abs(score),
+
         100
+
     )
 
 
@@ -770,54 +979,60 @@ def ai_predict(currency):
     forecast=current*(
 
         1+
+
         random.uniform(
+
             -0.01,
+
             0.01
+
         )
 
     )
 
 
+
     return {
 
-        "signal":action,
+
+        "signal":signal,
+
 
         "confidence":confidence,
+
 
         "forecast":round(
             forecast,
             2
         ),
 
-        "rsi":round(
-            rsi,
-            2
-        )
+
+        "rsi":rsi
 
     }
 
 
 
 
-# ============================================================
-# AI MULTI CURRENCY ANALYSIS
-# ============================================================
 
 
 def run_ai_engine(prices):
 
 
-    results={}
+    result={}
 
 
     for currency in prices:
 
-        results[currency]=ai_predict(
+
+        result[currency]=ai_predict(
             currency
         )
 
 
-    return results
+    return result
+
+
 
 
 
@@ -826,7 +1041,7 @@ def run_ai_engine(prices):
 # ============================================================
 
 
-def simple_forecast(currency,days=7):
+def forecast_currency(currency,days=7):
 
 
     history=load_market(
@@ -839,12 +1054,15 @@ def simple_forecast(currency,days=7):
         return []
 
 
+
     last=float(
         history.rate.iloc[-1]
     )
 
 
-    forecast=[]
+
+    output=[]
+
 
 
     for i in range(days):
@@ -859,18 +1077,18 @@ def simple_forecast(currency,days=7):
         last=last*(1+change)
 
 
-        forecast.append(
+
+        output.append(
             round(last,2)
         )
 
 
-    return forecast
+
+    return output
 
 
 
-# ============================================================
-# END PART 2
-# ============================================================
+
 
 # ============================================================
 # ACCOUNT ENGINE
@@ -879,40 +1097,67 @@ def simple_forecast(currency,days=7):
 
 def load_account():
 
+
     conn=db(TRADING_DB)
 
 
+
     row=conn.execute(
+
         """
-        SELECT balance,equity
+
+        SELECT
+
+        balance,
+
+        equity
+
+
         FROM account
+
+
         WHERE username=?
+
         """,
+
         (
             st.session_state.username,
         )
+
     ).fetchone()
+
 
 
     conn.close()
 
 
+
     if row:
+
 
         return {
 
             "balance":row[0],
+
             "equity":row[1]
 
         }
 
 
+
+
     return {
 
+
         "balance":10000.0,
+
+
         "equity":10000.0
 
     }
+
+
+
 
 
 
@@ -924,25 +1169,38 @@ def save_account(balance,equity):
 
 
     conn.execute(
+
         """
+
         INSERT OR REPLACE INTO account
+
         VALUES(?,?,?)
+
         """,
+
         (
+
             st.session_state.username,
+
             balance,
+
             equity
+
         )
+
     )
 
 
     conn.commit()
+
     conn.close()
 
 
 
+
+
 # ============================================================
-# TRADING ENGINE
+# TRADE EXECUTION
 # ============================================================
 
 
@@ -952,10 +1210,12 @@ def execute_trade(symbol,action,price):
     account=load_account()
 
 
+
     pnl=random.uniform(
         -100,
         200
     )
+
 
 
     if action=="SELL":
@@ -964,18 +1224,25 @@ def execute_trade(symbol,action,price):
 
 
 
-    new_balance=(
+
+    balance=(
 
         account["balance"]
+
         +
+
         pnl
 
     )
 
 
+
     save_account(
-        new_balance,
-        new_balance
+
+        balance,
+
+        balance
+
     )
 
 
@@ -983,12 +1250,19 @@ def execute_trade(symbol,action,price):
     conn=db(TRADING_DB)
 
 
+
     conn.execute(
+
         """
+
         INSERT INTO trades
+
         VALUES(NULL,?,?,?,?,?,?)
+
         """,
+
         (
+
             st.session_state.username,
 
             datetime.now().isoformat(),
@@ -1000,8 +1274,11 @@ def execute_trade(symbol,action,price):
             price,
 
             pnl
+
         )
+
     )
+
 
 
     conn.commit()
@@ -1010,72 +1287,139 @@ def execute_trade(symbol,action,price):
 
 
 
-    st.session_state.balance=new_balance
-
-
-
     return pnl
+
 
 
 
 
 def trade_history():
 
+
     conn=db(TRADING_DB)
 
 
-    df=pd.read_sql(
+
+    df=pd.read_sql_query(
+
         """
+
         SELECT *
+
         FROM trades
+
         WHERE username=?
+
         ORDER BY id DESC
+
+
         """,
+
         conn,
-        params=[
-            st.session_state.username
-        ]
+
+        params=(
+
+            st.session_state.username,
+
+        )
+
     )
+
 
 
     conn.close()
 
-
-    return df
-
-
+# ============================================================
+# PART 3/4
+# AUTONOMOUS BOT ENGINE
+# ============================================================
 
 
 # ============================================================
 # RISK MANAGEMENT
 # ============================================================
 
+def calculate_position_size(
+    balance,
+    risk_percent
+):
 
-def position_size(balance,risk):
 
+    risk_amount=(
 
-    amount=(
+        balance *
 
-        balance*
-        risk/100
+        risk_percent /
+
+        100
 
     )
 
 
     return round(
-        amount,
+        risk_amount,
         2
     )
 
 
 
 
+
 # ============================================================
-# AUTONOMOUS BOT LOOP
+# AI SIGNAL FORMATTER
 # ============================================================
 
+def create_signal(
+    currency,
+    data,
+    price
+):
+
+
+    return {
+
+
+        "currency":currency,
+
+
+        "action":data["signal"],
+
+
+        "confidence":data["confidence"],
+
+
+        "price":price,
+
+
+        "forecast":data["forecast"],
+
+
+        "rsi":data["rsi"],
+
+
+        "time":datetime.now().strftime(
+
+            "%Y-%m-%d %H:%M:%S"
+
+        )
+
+    }
+
+
+
+
+
+# ============================================================
+# BOT WORKER
+# ============================================================
 
 def bot_worker(stop_event):
+
+
+    logger.info(
+        "SAI AI Worker Started"
+    )
+
 
 
     while not stop_event.is_set():
@@ -1087,56 +1431,63 @@ def bot_worker(stop_event):
             prices=live_market()
 
 
+
             save_market(
                 prices
             )
 
 
-            ai=run_ai_engine(
+
+            ai_results=run_ai_engine(
                 prices
             )
 
 
 
-            for currency,data in ai.items():
+            for currency,result in ai_results.items():
 
 
-                if data["signal"]!="HOLD":
+
+                if result["signal"]=="HOLD":
+
+                    continue
 
 
-                    signal={
-
-                        "currency":currency,
-
-                        "action":data["signal"],
-
-                        "confidence":data["confidence"],
-
-                        "price":prices[currency],
-
-                        "time":datetime.now()
-
-                    }
 
 
-                    st.session_state.bot_queue.put(
-                        signal
+                signal=create_signal(
+
+                    currency,
+
+                    result,
+
+                    prices[currency]
+
+                )
+
+
+
+                BOT_QUEUE.put(
+                    signal
+                )
+
+
+
+                # Auto trading
+
+                if st.session_state.auto_trade:
+
+
+                    execute_trade(
+
+                        currency,
+
+                        result["signal"],
+
+                        prices[currency]
+
                     )
 
-
-
-                    if st.session_state.auto_trade:
-
-
-                        execute_trade(
-
-                            currency,
-
-                            data["signal"],
-
-                            prices[currency]
-
-                        )
 
 
 
@@ -1144,7 +1495,9 @@ def bot_worker(stop_event):
 
 
             logger.error(
-                str(e)
+
+                f"BOT ERROR: {e}"
+
             )
 
 
@@ -1154,7 +1507,17 @@ def bot_worker(stop_event):
 
 
 
+
+# ============================================================
+# BOT CONTROL
+# ============================================================
+
 def start_bot():
+
+
+    global BOT_THREAD
+    global BOT_STOP_EVENT
+
 
 
     if st.session_state.bot_running:
@@ -1163,28 +1526,28 @@ def start_bot():
 
 
 
-    stop_event=threading.Event()
+    BOT_STOP_EVENT=threading.Event()
 
 
-    thread=threading.Thread(
+
+    BOT_THREAD=threading.Thread(
 
         target=bot_worker,
 
-        args=(stop_event,),
+        args=(BOT_STOP_EVENT,),
 
         daemon=True
 
     )
 
 
-    st.session_state.stop=stop_event
 
-    st.session_state.thread=thread
+    BOT_THREAD.start()
+
+
 
     st.session_state.bot_running=True
 
-
-    thread.start()
 
 
 
@@ -1193,10 +1556,14 @@ def start_bot():
 def stop_bot():
 
 
-    if st.session_state.stop:
+    global BOT_STOP_EVENT
 
 
-        st.session_state.stop.set()
+
+    if BOT_STOP_EVENT:
+
+
+        BOT_STOP_EVENT.set()
 
 
 
@@ -1206,23 +1573,24 @@ def stop_bot():
 
 
 
+
 # ============================================================
 # QUEUE READER
 # ============================================================
 
-
-def get_signals():
+def read_signals():
 
 
     signals=[]
 
 
-    while not st.session_state.bot_queue.empty():
+
+    while not BOT_QUEUE.empty():
 
 
         signals.append(
 
-            st.session_state.bot_queue.get()
+            BOT_QUEUE.get()
 
         )
 
@@ -1231,10 +1599,27 @@ def get_signals():
 
 
 
+
+
+
 # ============================================================
-# INITIAL MARKET LOAD
+# INITIALIZE CURRENT ACCOUNT
 # ============================================================
 
+account=load_account()
+
+
+st.session_state.balance=account["balance"]
+
+st.session_state.equity=account["equity"]
+
+
+
+
+
+# ============================================================
+# LOAD FIRST MARKET DATA
+# ============================================================
 
 prices=live_market()
 
@@ -1243,31 +1628,22 @@ save_market(
     prices
 )
 
-
-account=load_account()
-
-
-st.session_state.balance=account["balance"]
-
-
-
 # ============================================================
-# END PART 3
-# ============================================================
-
-# ============================================================
-# PART 4 - STREAMLIT DASHBOARD UI
+# PART 4/4
+# COMPLETE STREAMLIT DASHBOARD UI
 # ============================================================
 
 
 # ============================================================
-# SIDEBAR CONTROL PANEL
+# SIDEBAR CONTROL CENTER
 # ============================================================
 
 with st.sidebar:
 
 
-    st.title("⚙️ SAI Control Center")
+    st.title(
+        "⚙️ SAI Control Center"
+    )
 
 
     st.write(
@@ -1314,6 +1690,11 @@ with st.sidebar:
 
         start_bot()
 
+        st.success(
+            "AI Bot Started"
+        )
+
+
 
 
     if st.button(
@@ -1321,6 +1702,10 @@ with st.sidebar:
     ):
 
         stop_bot()
+
+        st.warning(
+            "AI Bot Stopped"
+        )
 
 
 
@@ -1337,9 +1722,44 @@ with st.sidebar:
 
 
         st.dataframe(
+
             users(),
+
+            use_container_width=True,
+
             hide_index=True
+
         )
+
+
+
+        delete_name=st.selectbox(
+
+            "Delete User",
+
+            users()["username"].tolist()
+
+        )
+
+
+
+        if st.button(
+            "Delete User"
+        ):
+
+
+            if delete_name!="admin":
+
+                delete_user(
+                    delete_name
+                )
+
+                st.success(
+                    "User deleted"
+                )
+
+                st.rerun()
+
 
 
 
@@ -1366,13 +1786,13 @@ st.title(
 
 
 st.caption(
-    "East Africa AI Market Analysis System"
+    "AI Market Prediction System | East Africa Edition"
 )
 
 
 
 # ============================================================
-# TOP METRICS
+# METRIC PANEL
 # ============================================================
 
 
@@ -1392,16 +1812,21 @@ m1.metric(
 )
 
 
+
 m2.metric(
 
-    "Bot Status",
+    "Bot",
 
     "RUNNING"
+
     if st.session_state.bot_running
+
     else
+
     "STOPPED"
 
 )
+
 
 
 m3.metric(
@@ -1413,9 +1838,10 @@ m3.metric(
 )
 
 
+
 m4.metric(
 
-    "Currency Models",
+    "Models",
 
     len(CURRENCIES)
 
@@ -1425,7 +1851,29 @@ m4.metric(
 
 
 # ============================================================
-# DASHBOARD TABS
+# READ AI SIGNALS
+# ============================================================
+
+new_signals=read_signals()
+
+
+if new_signals:
+
+    st.session_state.signals.extend(
+        new_signals
+    )
+
+
+    st.toast(
+        "New AI trade signal detected"
+    )
+
+
+
+
+
+# ============================================================
+# MAIN TABS
 # ============================================================
 
 
@@ -1437,7 +1885,7 @@ tabs=st.tabs(
 
         "🧠 AI Brain",
 
-        "📊 Forecast",
+        "🔮 Forecast",
 
         "💹 Trading",
 
@@ -1448,6 +1896,8 @@ tabs=st.tabs(
     ]
 
 )
+
+
 
 
 
@@ -1466,26 +1916,24 @@ with tabs[0]:
     prices=live_market()
 
 
-    save_market(
-        prices
-    )
-
-
-
     df=pd.DataFrame(
 
         {
 
-        "Currency":prices.keys(),
+            "Currency":
+            list(prices.keys()),
 
-        "Rate":prices.values()
+
+            "Rate":
+            list(prices.values())
 
         }
 
     )
 
 
-    if PLOTLY:
+
+    if PLOTLY_AVAILABLE:
 
 
         fig=go.Figure()
@@ -1495,11 +1943,20 @@ with tabs[0]:
 
             go.Bar(
 
-                x=df["Currency"],
+                x=df.Currency,
 
-                y=df["Rate"]
+                y=df.Rate,
+
+                name="Exchange Rate"
 
             )
+
+        )
+
+
+        fig.update_layout(
+
+            title="USD Base Currency Market"
 
         )
 
@@ -1513,7 +1970,9 @@ with tabs[0]:
         )
 
 
+
     else:
+
 
         st.bar_chart(
 
@@ -1530,20 +1989,21 @@ with tabs[0]:
     cols=st.columns(4)
 
 
+    for i,(cur,value) in enumerate(prices.items()):
 
-    for index,(cur,rate) in enumerate(prices.items()):
 
-
-        with cols[index%4]:
+        with cols[i%4]:
 
 
             st.metric(
 
                 cur,
 
-                rate
+                value
 
             )
+
+
 
 
 
@@ -1556,14 +2016,14 @@ with tabs[1]:
 
 
     st.subheader(
-        "🧠 SAI AI Decision Engine"
+        "🧠 SAI AI Decision Brain"
     )
 
 
     prices=live_market()
 
 
-    ai_results=run_ai_engine(
+    results=run_ai_engine(
         prices
     )
 
@@ -1571,61 +2031,66 @@ with tabs[1]:
     rows=[]
 
 
-    for cur,result in ai_results.items():
+
+    for currency,data in results.items():
 
 
         rows.append(
 
             {
 
-            "Currency":cur,
+                "Currency":currency,
 
-            "Signal":result["signal"],
+                "Signal":data["signal"],
 
-            "Confidence":
-            f"{result['confidence']}%",
+                "Confidence":
+                f"{data['confidence']}%",
 
-            "RSI":
-            result.get("rsi",0),
+                "RSI":
+                data["rsi"],
 
-            "Forecast":
-            result["forecast"]
+                "Forecast":
+                data["forecast"]
 
             }
 
         )
 
 
+
     ai_df=pd.DataFrame(rows)
+
 
 
     st.dataframe(
 
         ai_df,
 
-        use_container_width=True
+        use_container_width=True,
+
+        hide_index=True
 
     )
 
 
 
-    for row in rows:
+    for item in rows:
 
 
-        if row["Signal"]=="BUY":
+        if item["Signal"]=="BUY":
 
             st.success(
 
-                f"🟢 BUY {row['Currency']}"
+                f"🟢 BUY signal: {item['Currency']}"
 
             )
 
 
-        elif row["Signal"]=="SELL":
+        elif item["Signal"]=="SELL":
 
             st.error(
 
-                f"🔴 SELL {row['Currency']}"
+                f"🔴 SELL signal: {item['Currency']}"
 
             )
 
@@ -1647,7 +2112,7 @@ with tabs[2]:
 
     currency=st.selectbox(
 
-        "Select Currency",
+        "Currency",
 
         list(CURRENCIES.keys())
 
@@ -1656,7 +2121,7 @@ with tabs[2]:
 
     days=st.slider(
 
-        "Forecast Days",
+        "Forecast Period",
 
         1,
 
@@ -1668,7 +2133,7 @@ with tabs[2]:
 
 
 
-    forecast=simple_forecast(
+    forecast=forecast_currency(
 
         currency,
 
@@ -1678,12 +2143,13 @@ with tabs[2]:
 
 
 
-    forecast_df=pd.DataFrame(
+    chart=pd.DataFrame(
 
         {
 
         "Day":
         range(1,days+1),
+
 
         "Forecast":
         forecast
@@ -1693,19 +2159,19 @@ with tabs[2]:
     )
 
 
+
     st.line_chart(
 
-        forecast_df.set_index(
+        chart.set_index(
             "Day"
         )
 
     )
 
 
-
     st.dataframe(
 
-        forecast_df,
+        chart,
 
         hide_index=True
 
@@ -1723,8 +2189,9 @@ with tabs[3]:
 
 
     st.subheader(
-        "💹 Manual AI Trading"
+        "💹 AI Trading Terminal"
     )
+
 
 
     symbol=st.selectbox(
@@ -1737,15 +2204,15 @@ with tabs[3]:
 
 
 
-    action=st.selectbox(
+    action=st.radio(
 
         "Action",
 
         [
 
-        "BUY",
+            "BUY",
 
-        "SELL"
+            "SELL"
 
         ]
 
@@ -1785,9 +2252,11 @@ with tabs[3]:
 
         st.success(
 
-            f"Trade executed PnL ${pnl:.2f}"
+            f"Trade completed | PnL ${pnl:.2f}"
 
         )
+
+
 
 
 
@@ -1812,7 +2281,9 @@ with tabs[4]:
 
         history,
 
-        use_container_width=True
+        use_container_width=True,
+
+        hide_index=True
 
     )
 
@@ -1821,7 +2292,11 @@ with tabs[4]:
     if not history.empty:
 
 
-        st.metric(
+        a,b=st.columns(2)
+
+
+
+        a.metric(
 
             "Total Trades",
 
@@ -1830,13 +2305,14 @@ with tabs[4]:
         )
 
 
-        st.metric(
+        b.metric(
 
             "Total PnL",
 
             f"${history.pnl.sum():.2f}"
 
         )
+
 
 
 
@@ -1850,32 +2326,39 @@ with tabs[5]:
 
 
     st.subheader(
-        "⚙ System Information"
+        "⚙ System Status"
     )
 
 
-    st.write(
+    st.json(
 
         {
 
-        "Version":
-        "SAI AI Forex Bot v5.0",
+            "Version":
+            "SAI AI Forex Intelligence v6.0",
 
-        "Engine":
-        "Streamlit Single File",
 
-        "Database":
-        "SQLite",
+            "Database":
+            "SQLite",
 
-        "AI":
-        "Signal + Forecast Engine",
 
-        "Region":
-        "East Africa"
+            "Architecture":
+            "Single Streamlit File",
+
+
+            "AI Engine":
+            "RSI + SMA + Forecast",
+
+
+            "Region":
+            "East Africa"
+
 
         }
 
     )
+
+
 
 
 
@@ -1889,7 +2372,10 @@ st.divider()
 
 st.caption(
 
-    "SAI AI Forex Intelligence v5.0 | Autonomous Trading Simulation"
+    "SAI AI Forex Intelligence v6.0 | Autonomous AI Trading Simulation"
 
 )
 
+
+
+    return df
