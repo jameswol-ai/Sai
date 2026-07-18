@@ -2379,3 +2379,1209 @@ st.caption(
 
 
     return df
+
+# ============================================================
+# PART 3/4
+# AUTONOMOUS BOT ENGINE + AI MEMORY + SESSION SAFETY
+# ============================================================
+
+import threading
+import queue
+
+
+# ============================================================
+# BOT QUEUE
+# ============================================================
+
+if "bot_queue" not in st.session_state:
+
+    st.session_state.bot_queue = queue.Queue()
+
+
+
+# ============================================================
+# AI MEMORY SYSTEM
+# ============================================================
+
+
+def save_ai_memory(event, value):
+
+
+    conn=db_connect(
+        TRADING_DB
+    )
+
+
+    conn.execute(
+
+        """
+
+        INSERT INTO ai_memory
+
+        VALUES(NULL,?,?,?,?)
+
+        """,
+
+        (
+
+            st.session_state.username,
+
+            datetime.now().isoformat(),
+
+            event,
+
+            str(value)
+
+        )
+
+    )
+
+
+    conn.commit()
+
+    conn.close()
+
+
+
+
+
+def load_ai_memory(limit=50):
+
+
+    conn=db_connect(
+        TRADING_DB
+    )
+
+
+    df=pd.read_sql_query(
+
+        """
+
+        SELECT time,event,value
+
+        FROM ai_memory
+
+        WHERE username=?
+
+        ORDER BY id DESC
+
+        LIMIT ?
+
+        """,
+
+        conn,
+
+        params=(
+
+            st.session_state.username,
+
+            limit
+
+        )
+
+    )
+
+
+    conn.close()
+
+
+    return df
+
+
+
+
+
+# ============================================================
+# SAFE BOT SIGNAL GENERATOR
+# ============================================================
+
+
+def generate_signals():
+
+
+    prices=get_market()
+
+
+    save_market(
+        prices
+    )
+
+
+    ai=run_ai(
+        prices
+    )
+
+
+    signals=[]
+
+
+
+    for currency,result in ai.items():
+
+
+        if result["signal"]!="HOLD":
+
+
+            signal={
+
+
+                "currency":currency,
+
+
+                "action":result["signal"],
+
+
+                "confidence":result["confidence"],
+
+
+                "price":prices[currency],
+
+
+                "time":datetime.now().strftime(
+
+                    "%Y-%m-%d %H:%M:%S"
+
+                )
+
+            }
+
+
+
+            signals.append(
+                signal
+            )
+
+
+
+            save_ai_memory(
+
+                "SIGNAL",
+
+                signal
+
+            )
+
+
+
+
+    return signals
+
+
+
+
+
+# ============================================================
+# AUTONOMOUS BOT WORKER
+# ============================================================
+
+
+def bot_worker(stop_event):
+
+
+    logger.info(
+        "SAI Bot started"
+    )
+
+
+
+    while not stop_event.is_set():
+
+
+        try:
+
+
+            signals=generate_signals()
+
+
+
+            for signal in signals:
+
+
+                st.session_state.bot_queue.put(
+                    signal
+                )
+
+
+
+                if st.session_state.auto_trade:
+
+
+                    execute_trade(
+
+                        signal["currency"],
+
+                        signal["action"],
+
+                        signal["price"]
+
+                    )
+
+
+
+            time.sleep(15)
+
+
+
+        except Exception as e:
+
+
+            logger.error(
+                f"BOT ERROR: {e}"
+            )
+
+
+            save_ai_memory(
+
+                "ERROR",
+
+                str(e)
+
+            )
+
+
+            time.sleep(5)
+
+
+
+
+
+    logger.info(
+        "SAI Bot stopped"
+    )
+
+
+
+
+
+# ============================================================
+# START / STOP ENGINE
+# ============================================================
+
+
+def start_bot():
+
+
+    if st.session_state.bot_running:
+
+        return
+
+
+
+    stop_event=threading.Event()
+
+
+
+    thread=threading.Thread(
+
+        target=bot_worker,
+
+        args=(stop_event,),
+
+        daemon=True
+
+    )
+
+
+
+    st.session_state.stop_event=stop_event
+
+    st.session_state.bot_thread=thread
+
+    st.session_state.bot_running=True
+
+
+
+    thread.start()
+
+
+
+    save_ai_memory(
+
+        "SYSTEM",
+
+        "BOT STARTED"
+
+    )
+
+
+
+
+
+
+def stop_bot():
+
+
+    if st.session_state.get(
+        "stop_event"
+    ):
+
+
+        st.session_state.stop_event.set()
+
+
+
+    st.session_state.bot_running=False
+
+
+
+    save_ai_memory(
+
+        "SYSTEM",
+
+        "BOT STOPPED"
+
+    )
+
+
+
+
+
+
+# ============================================================
+# SESSION STATE HARDENING
+# ============================================================
+
+
+SESSION_DEFAULTS={
+
+
+    "bot_running":False,
+
+
+    "bot_thread":None,
+
+
+    "stop_event":None,
+
+
+    "auto_trade":False,
+
+
+    "risk":5,
+
+
+    "last_update":None
+
+
+}
+
+
+
+
+
+for key,value in SESSION_DEFAULTS.items():
+
+
+    if key not in st.session_state:
+
+
+        st.session_state[key]=value
+
+
+
+
+
+
+# ============================================================
+# QUEUE READER
+# ============================================================
+
+
+def read_bot_queue():
+
+
+    signals=[]
+
+
+
+    while not st.session_state.bot_queue.empty():
+
+
+        try:
+
+
+            signals.append(
+
+                st.session_state.bot_queue.get_nowait()
+
+            )
+
+
+        except queue.Empty:
+
+
+            break
+
+
+
+    return signals
+
+
+
+
+
+# ============================================================
+# TRADE HISTORY
+# ============================================================
+
+
+def get_trade_history():
+
+
+    conn=db_connect(
+        TRADING_DB
+    )
+
+
+    df=pd.read_sql_query(
+
+        """
+
+        SELECT *
+
+        FROM trades
+
+        WHERE username=?
+
+        ORDER BY id DESC
+
+        """,
+
+        conn,
+
+        params=(
+
+            st.session_state.username
+
+        )
+
+    )
+
+
+    conn.close()
+
+
+    return df
+
+
+
+
+
+
+# ============================================================
+# SYSTEM DIAGNOSTICS
+# ============================================================
+
+
+def system_status():
+
+
+    return {
+
+
+        "User":
+
+        st.session_state.username,
+
+
+        "Role":
+
+        st.session_state.role,
+
+
+        "Database":
+
+        "SQLite Online",
+
+
+        "AI Engine":
+
+        "Active",
+
+
+        "Bot":
+
+        "Running"
+
+        if st.session_state.bot_running
+
+        else
+
+        "Stopped",
+
+
+        "Memory Records":
+
+        len(load_ai_memory())
+
+# ============================================================
+# PART 4/4
+# FULL STREAMLIT DASHBOARD UI
+# ============================================================
+
+
+# ============================================================
+# SIDEBAR CONTROL CENTER
+# ============================================================
+
+with st.sidebar:
+
+    st.title("⚙️ SAI Control Center")
+
+
+    st.write(
+        f"👤 {st.session_state.username}"
+    )
+
+
+    st.write(
+        f"Role: {st.session_state.role}"
+    )
+
+
+    st.divider()
+
+
+    st.session_state.risk = st.slider(
+        "Risk Level %",
+        1,
+        20,
+        st.session_state.risk
+    )
+
+
+    st.session_state.auto_trade = st.checkbox(
+        "Enable AI Auto Trading",
+        value=st.session_state.auto_trade
+    )
+
+
+    col1,col2 = st.columns(2)
+
+
+    with col1:
+
+        if st.button("▶ Start"):
+
+            start_bot()
+
+
+
+    with col2:
+
+        if st.button("⏹ Stop"):
+
+            stop_bot()
+
+
+
+    st.divider()
+
+
+
+    if st.session_state.role == "admin":
+
+        st.subheader("👥 Users")
+
+
+        user_df=get_users()
+
+
+        st.dataframe(
+            user_df,
+            hide_index=True,
+            use_container_width=True
+        )
+
+
+
+        delete_name=st.selectbox(
+
+            "Delete User",
+
+            user_df["username"].tolist()
+
+            if not user_df.empty
+
+            else []
+
+        )
+
+
+        if st.button("Delete User"):
+
+
+            if delete_name!="admin":
+
+                remove_user(
+                    delete_name
+                )
+
+                st.success(
+                    "User removed"
+                )
+
+                st.rerun()
+
+
+
+    if st.button("🚪 Logout"):
+
+
+        st.session_state.clear()
+
+        st.rerun()
+
+
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
+
+st.title(
+    "📈 SAI Autonomous Forex Intelligence"
+)
+
+
+st.caption(
+    "AI Market Brain | East Africa Currency Intelligence"
+)
+
+
+
+# ============================================================
+# ACCOUNT METRICS
+# ============================================================
+
+
+account=get_account()
+
+
+signals=read_bot_queue()
+
+
+m1,m2,m3,m4=st.columns(4)
+
+
+
+m1.metric(
+
+    "Balance",
+
+    f"${account['balance']:,.2f}"
+
+)
+
+
+
+m2.metric(
+
+    "Bot Status",
+
+    "RUNNING"
+    if st.session_state.bot_running
+    else
+    "STOPPED"
+
+)
+
+
+
+m3.metric(
+
+    "Risk",
+
+    f"{st.session_state.risk}%"
+
+)
+
+
+
+m4.metric(
+
+    "Signals",
+
+    len(signals)
+
+)
+
+
+
+
+# ============================================================
+# DASHBOARD TABS
+# ============================================================
+
+
+tabs=st.tabs(
+
+    [
+
+        "🌍 Market",
+
+        "🧠 AI Brain",
+
+        "🔮 Forecast",
+
+        "💹 Trading",
+
+        "📜 History",
+
+        "🧬 AI Memory",
+
+        "⚙ System"
+
+    ]
+
+)
+
+
+
+# ============================================================
+# MARKET TAB
+# ============================================================
+
+
+with tabs[0]:
+
+
+    st.subheader(
+        "🌍 Live Market"
+    )
+
+
+    prices=get_market()
+
+
+    save_market(
+        prices
+    )
+
+
+    market_df=pd.DataFrame(
+
+        {
+
+        "Currency":list(prices.keys()),
+
+        "Rate":list(prices.values())
+
+        }
+
+    )
+
+
+
+    st.dataframe(
+
+        market_df,
+
+        hide_index=True
+
+    )
+
+
+
+    if PLOTLY:
+
+
+        import plotly.express as px
+
+
+        fig=px.bar(
+
+            market_df,
+
+            x="Currency",
+
+            y="Rate",
+
+            title="Currency Rates"
+
+        )
+
+
+        st.plotly_chart(
+
+            fig,
+
+            use_container_width=True
+
+        )
+
+
+    else:
+
+        st.bar_chart(
+
+            market_df.set_index(
+                "Currency"
+            )
+
+        )
+
+
+
+
+
+# ============================================================
+# AI BRAIN TAB
+# ============================================================
+
+
+with tabs[1]:
+
+
+    st.subheader(
+        "🧠 SAI AI Decision Brain"
+    )
+
+
+    prices=get_market()
+
+
+    results=run_ai(
+        prices
+    )
+
+
+    rows=[]
+
+
+    for currency,data in results.items():
+
+
+        rows.append(
+
+            {
+
+            "Currency":currency,
+
+            "Signal":data["signal"],
+
+            "Confidence %":data["confidence"],
+
+            "RSI":data["rsi"],
+
+            "Forecast":data["forecast"]
+
+            }
+
+        )
+
+
+    ai_df=pd.DataFrame(rows)
+
+
+
+    st.dataframe(
+
+        ai_df,
+
+        hide_index=True,
+
+        use_container_width=True
+
+    )
+
+
+
+    for item in rows:
+
+
+        if item["Signal"]=="BUY":
+
+            st.success(
+
+                f"🟢 BUY {item['Currency']} | Confidence {item['Confidence %']}%"
+
+            )
+
+
+        elif item["Signal"]=="SELL":
+
+            st.error(
+
+                f"🔴 SELL {item['Currency']} | Confidence {item['Confidence %']}%"
+
+            )
+
+
+
+
+
+# ============================================================
+# FORECAST TAB
+# ============================================================
+
+
+with tabs[2]:
+
+
+    st.subheader(
+        "🔮 AI Forecast Engine"
+    )
+
+
+    currency=st.selectbox(
+
+        "Currency",
+
+        list(CURRENCIES.keys())
+
+    )
+
+
+    days=st.slider(
+
+        "Days",
+
+        1,
+
+        30,
+
+        7
+
+    )
+
+
+    prediction=forecast_currency(
+
+        currency,
+
+        days
+
+    )
+
+
+    forecast_df=pd.DataFrame(
+
+        {
+
+        "Day":range(1,days+1),
+
+        "Forecast":prediction
+
+        }
+
+    )
+
+
+    st.line_chart(
+
+        forecast_df.set_index(
+            "Day"
+        )
+
+    )
+
+
+    st.dataframe(
+
+        forecast_df,
+
+        hide_index=True
+
+    )
+
+
+
+
+
+# ============================================================
+# TRADING TAB
+# ============================================================
+
+
+with tabs[3]:
+
+
+    st.subheader(
+        "💹 Manual Trading"
+    )
+
+
+    symbol=st.selectbox(
+
+        "Currency",
+
+        list(CURRENCIES.keys())
+
+    )
+
+
+    action=st.radio(
+
+        "Action",
+
+        [
+
+            "BUY",
+
+            "SELL"
+
+        ]
+
+    )
+
+
+    price=get_market()[symbol]
+
+
+    st.metric(
+
+        "Current Price",
+
+        price
+
+    )
+
+
+
+    if st.button(
+        "Execute AI Trade"
+    ):
+
+
+        pnl=execute_trade(
+
+            symbol,
+
+            action,
+
+            price
+
+        )
+
+
+        st.success(
+
+            f"Trade completed | PnL ${pnl:.2f}"
+
+        )
+
+
+
+
+
+# ============================================================
+# HISTORY TAB
+# ============================================================
+
+
+with tabs[4]:
+
+
+    st.subheader(
+        "📜 Trade History"
+    )
+
+
+    history=get_trade_history()
+
+
+    st.dataframe(
+
+        history,
+
+        hide_index=True,
+
+        use_container_width=True
+
+    )
+
+
+    if not history.empty:
+
+
+        st.metric(
+
+            "Total Trades",
+
+            len(history)
+
+        )
+
+
+        st.metric(
+
+            "Total PnL",
+
+            f"${history.pnl.sum():.2f}"
+
+        )
+
+
+
+
+
+# ============================================================
+# AI MEMORY TAB
+# ============================================================
+
+
+with tabs[5]:
+
+
+    st.subheader(
+        "🧬 AI Memory Database"
+    )
+
+
+    memory=load_ai_memory()
+
+
+    st.dataframe(
+
+        memory,
+
+        hide_index=True,
+
+        use_container_width=True
+
+    )
+
+
+
+
+
+# ============================================================
+# SYSTEM TAB
+# ============================================================
+
+
+with tabs[6]:
+
+
+    st.subheader(
+        "⚙ System Diagnostics"
+    )
+
+
+    st.json(
+
+        system_status()
+
+    )
+
+
+
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+
+st.divider()
+
+
+st.caption(
+
+    "SAI AI Forex Intelligence v6.0 | Autonomous Trading Simulation"
+
+)
+
+    }
