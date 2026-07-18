@@ -5,6 +5,10 @@ import pandas as pd
 
 app = Flask(__name__)
 
+@app.route("/")
+def home():
+    return jsonify({"status": "SAI is running"})
+
 # Load the trained model
 model = None
 try:
