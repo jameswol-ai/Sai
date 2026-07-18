@@ -1,73 +1,28 @@
+from core.sai_core import SaiCore
 from core.market import MarketEngine
-from core.predictor import SaiBrain
-from core.strategy import StrategyEngine
-from core.risk import RiskEngine
-from core.memory import SaiMemory
-
 import time
 
 
-print("SAI AI Trading Engine Starting...")
-
+sai = SaiCore()
 
 market = MarketEngine()
-brain = SaiBrain()
-strategy = StrategyEngine()
-risk = RiskEngine()
-memory = SaiMemory()
+
+
+print("SAI Autonomous Agent System Online")
 
 
 while True:
 
-    try:
 
-        data = market.get_market()
-
-
-        prediction = brain.analyze(
-            data
-        )
+    data = market.get_market()
 
 
-        decision = strategy.decide(
-            prediction
-        )
+    result = sai.think(data)
 
 
-        approved = risk.check(
-            decision
-        )
+    print(
+        result
+    )
 
 
-        result = {
-
-            "market": data,
-
-            "prediction": prediction,
-
-            "decision": decision,
-
-            "approved": approved
-
-        }
-
-
-        memory.save(
-            result
-        )
-
-
-        print(result)
-
-
-        time.sleep(10)
-
-
-    except Exception as e:
-
-        print(
-            "SAI Error:",
-            e
-        )
-
-        time.sleep(5)
+    time.sleep(10)
