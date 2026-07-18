@@ -28,6 +28,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Inject PWA manifest and meta tags for mobile install
+st.markdown("""
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0e1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SAI">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%234CAF50'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>📈</text></svg>">
+""", unsafe_allow_html=True)
+
 # ============================================================
 # DATABASE CONNECTION (PostgreSQL via Supabase / Render)
 # ============================================================
