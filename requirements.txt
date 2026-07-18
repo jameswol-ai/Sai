@@ -1,8 +1,9 @@
 streamlit
+pandas
+numpy
+matplotlib
 flask
 gunicorn
-numpy
-pandas
 scikit-learn
 joblib
 requests
