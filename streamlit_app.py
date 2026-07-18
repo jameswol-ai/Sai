@@ -1,107 +1,212 @@
 # ============================================================
-# SAI AI Forex Trading Bot - Streamlit Control Center v3.0
-# Cloud Stable Edition
+# SAI AI Forex Bot v4.0
+# Unified Cloud Stable Edition
+# Part 1: Core System + Database + Authentication
 # ============================================================
 
 import streamlit as st
-import pandas as pd
-import numpy as np
 import sqlite3
 import hashlib
-import random
-import time
-import queue
+import os
+import logging
 import threading
+import queue
+import time
+import random
+import json
+
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, List, Tuple, Optional
 
-import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
 
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
-    page_title="SAI AI Forex Bot",
+    page_title="SAI AI Forex Intelligence",
     page_icon="📈",
     layout="wide"
 )
 
 
+# ============================================================
+# PATHS
+# ============================================================
+
 BASE_DIR = Path(__file__).parent
 
 USER_DB = BASE_DIR / "sai_users.db"
 TRADE_DB = BASE_DIR / "sai_trading.db"
+MEMORY_FILE = BASE_DIR / "sai_memory.json"
 
 
 # ============================================================
-# DATABASE
+# LOGGING
 # ============================================================
 
-def connect(db):
-    return sqlite3.connect(db)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+logger = logging.getLogger("SAI")
 
 
-def hash_password(password):
+# ============================================================
+# PASSWORD SECURITY
+# ============================================================
+
+def hash_password(password: str) -> str:
     return hashlib.sha256(
         password.encode()
     ).hexdigest()
 
 
+
+# ============================================================
+# DATABASE ENGINE
+# ============================================================
+
+def db_connect(path):
+
+    conn = sqlite3.connect(
+        path,
+        check_same_thread=False
+    )
+
+    return conn
+
+
+
 def init_database():
 
-    conn = connect(USER_DB)
+    # -------------------------
+    # USER DATABASE
+    # -------------------------
 
-    conn.execute("""
+    conn = db_connect(USER_DB)
+
+    conn.executescript("""
+
     CREATE TABLE IF NOT EXISTS users(
+
         username TEXT PRIMARY KEY,
-        password TEXT,
-        role TEXT
-    )
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        email TEXT DEFAULT ''
+
+    );
+
+
     """)
 
-    count = conn.execute(
+
+    existing = conn.execute(
         "SELECT COUNT(*) FROM users"
     ).fetchone()[0]
 
-    if count == 0:
+
+    if existing == 0:
+
         conn.execute(
             """
             INSERT INTO users
-            VALUES(?,?,?)
+            VALUES(?,?,?,?)
             """,
             (
                 "admin",
                 hash_password("admin123"),
-                "admin"
+                "admin",
+                "admin@sai.ai"
             )
         )
+
 
     conn.commit()
     conn.close()
 
 
-    conn = connect(TRADE_DB)
+
+    # -------------------------
+    # TRADING DATABASE
+    # -------------------------
+
+    conn = db_connect(TRADE_DB)
+
 
     conn.executescript("""
 
     CREATE TABLE IF NOT EXISTS trades(
-        id INTEGER PRIMARY KEY,
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
         username TEXT,
-        time TEXT,
+
+        timestamp TEXT,
+
         symbol TEXT,
+
         action TEXT,
+
         price REAL,
+
+        units REAL,
+
         pnl REAL
+
     );
 
-    CREATE TABLE IF NOT EXISTS balance(
+
+    CREATE TABLE IF NOT EXISTS accounts(
+
         username TEXT PRIMARY KEY,
-        amount REAL
+
+        balance REAL DEFAULT 10000,
+
+        equity REAL DEFAULT 10000
+
     );
+
+
+    CREATE TABLE IF NOT EXISTS positions(
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        username TEXT,
+
+        symbol TEXT,
+
+        direction TEXT,
+
+        entry REAL,
+
+        units REAL,
+
+        status TEXT
+
+    );
+
+
+    CREATE TABLE IF NOT EXISTS bot_logs(
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        username TEXT,
+
+        timestamp TEXT,
+
+        message TEXT
+
+    );
+
 
     """)
+
 
     conn.commit()
     conn.close()
@@ -113,17 +218,23 @@ init_database()
 
 
 # ============================================================
-# USER SYSTEM
+# USER MANAGEMENT
 # ============================================================
 
-def login(username, password):
+def authenticate_user(
+        username:str,
+        password:str
+):
 
-    conn = connect(USER_DB)
+    conn = db_connect(USER_DB)
 
-    row = conn.execute(
+
+    result = conn.execute(
         """
-        SELECT role FROM users
-        WHERE username=? AND password=?
+        SELECT role
+        FROM users
+        WHERE username=?
+        AND password_hash=?
         """,
         (
             username,
@@ -131,248 +242,86 @@ def login(username, password):
         )
     ).fetchone()
 
+
     conn.close()
 
-    if row:
-        return True, row[0]
+
+    if result:
+
+        return True, result[0]
+
 
     return False, None
 
 
 
-def register(username,password):
+
+def create_user(
+        username,
+        password,
+        email=""
+):
 
     try:
 
-        conn = connect(USER_DB)
+        conn = db_connect(USER_DB)
 
         conn.execute(
             """
             INSERT INTO users
-            VALUES(?,?,?)
+            VALUES(?,?,?,?)
             """,
             (
                 username,
                 hash_password(password),
-                "user"
+                "user",
+                email
             )
         )
+
 
         conn.commit()
         conn.close()
 
         return True
 
-    except:
+
+    except sqlite3.IntegrityError:
 
         return False
 
 
 
-# ============================================================
-# SESSION
-# ============================================================
 
-defaults = {
+def get_users():
 
-    "logged":False,
-    "username":"",
-    "role":"",
-    "bot":False,
-    "balance":10000,
-    "trades":[],
-    "signals":[]
+    conn = db_connect(USER_DB)
 
-}
+    data = conn.execute(
+        """
+        SELECT username,role,email
+        FROM users
+        """
+    ).fetchall()
 
-
-for k,v in defaults.items():
-
-    if k not in st.session_state:
-        st.session_state[k]=v
-
-
-
-# ============================================================
-# LOGIN PAGE
-# ============================================================
-
-if not st.session_state.logged:
-
-
-    st.title("🔐 SAI AI Forex Login")
-
-
-    tab1,tab2 = st.tabs(
-        [
-            "Login",
-            "Register"
-        ]
-    )
-
-
-    with tab1:
-
-        user = st.text_input(
-            "Username"
-        )
-
-        pw = st.text_input(
-            "Password",
-            type="password"
-        )
-
-
-        if st.button("Login"):
-
-            ok,role = login(
-                user,
-                pw
-            )
-
-            if ok:
-
-                st.session_state.logged=True
-                st.session_state.username=user
-                st.session_state.role=role
-
-                st.rerun()
-
-            else:
-
-                st.error(
-                    "Invalid login"
-                )
-
-
-
-    with tab2:
-
-        new_user = st.text_input(
-            "New Username"
-        )
-
-        new_pw = st.text_input(
-            "New Password",
-            type="password"
-        )
-
-
-        if st.button("Create Account"):
-
-            if register(
-                new_user,
-                new_pw
-            ):
-
-                st.success(
-                    "Account created"
-                )
-
-            else:
-
-                st.error(
-                    "Username exists"
-                )
-
-
-    st.stop()
-
-
-
-# ============================================================
-# MARKET ENGINE
-# ============================================================
-
-
-CURRENCIES = [
-
-"UGX",
-"KES",
-"TZS",
-"SSP",
-"RWF",
-"USD",
-"EUR"
-
-]
-
-
-def market_data():
-
-    data={}
-
-    ranges={
-
-        "UGX":3800,
-        "KES":130,
-        "TZS":2600,
-        "SSP":1600,
-        "RWF":1350,
-        "USD":1,
-        "EUR":0.92
-
-    }
-
-
-    for c,v in ranges.items():
-
-        data[c]=round(
-            v+random.uniform(-5,5),
-            2
-        )
-
+    conn.close()
 
     return data
 
 
 
-def ai_signal():
 
-    return random.choice(
-        [
-            "BUY",
-            "SELL",
-            "HOLD"
-        ]
-    )
+def delete_user(username):
 
-
-
-# ============================================================
-# TRADING ENGINE
-# ============================================================
-
-
-def execute_trade(symbol,action,price):
-
-
-    pnl=random.uniform(
-        -50,
-        100
-    )
-
-
-    conn=connect(
-        TRADE_DB
-    )
-
+    conn = db_connect(USER_DB)
 
     conn.execute(
         """
-        INSERT INTO trades
-        VALUES(NULL,?,?,?,?,?,?)
+        DELETE FROM users
+        WHERE username=?
         """,
-        (
-            st.session_state.username,
-            datetime.now().isoformat(),
-            symbol,
-            action,
-            price,
-            pnl
-        )
+        (username,)
     )
-
 
     conn.commit()
     conn.close()
@@ -380,208 +329,172 @@ def execute_trade(symbol,action,price):
 
 
 # ============================================================
-# DASHBOARD
+# SESSION MEMORY
 # ============================================================
 
+SESSION_DEFAULTS = {
 
-st.sidebar.title(
-    "⚙ SAI Control"
-)
+    "authenticated":False,
 
+    "username":None,
 
-st.sidebar.write(
-    f"User: {st.session_state.username}"
-)
+    "role":None,
 
+    "bot_running":False,
 
-if st.sidebar.button(
-    "Logout"
-):
+    "auto_trade":False,
 
-    st.session_state.clear()
-    st.rerun()
+    "risk_level":5,
 
+    "balance":10000,
 
+    "trade_queue":queue.Queue(),
 
-risk = st.sidebar.slider(
-    "Risk %",
-    1,
-    10,
-    2
-)
+    "logs":[],
+
+    "market_history":[]
+
+}
 
 
 
-if st.sidebar.button(
-    "Start AI Bot"
-):
+for key,value in SESSION_DEFAULTS.items():
 
-    st.session_state.bot=True
+    if key not in st.session_state:
 
-
-
-if st.sidebar.button(
-    "Stop AI Bot"
-):
-
-    st.session_state.bot=False
-
-
-
-st.title(
-    "📈 SAI Autonomous Forex Intelligence"
-)
-
-
-
-rates=market_data()
-
-
-
-col1,col2,col3,col4=st.columns(4)
-
-
-col1.metric(
-    "Balance",
-    f"${st.session_state.balance:,.2f}"
-)
-
-
-col2.metric(
-    "Bot",
-    "RUNNING" if st.session_state.bot else "STOPPED"
-)
-
-
-signal=ai_signal()
-
-
-col3.metric(
-    "AI Signal",
-    signal
-)
-
-
-col4.metric(
-    "Risk",
-    f"{risk}%"
-)
+        st.session_state[key]=value
 
 
 
 # ============================================================
-# MARKET CHART
+# LOGIN / REGISTER UI
 # ============================================================
 
 
-st.subheader(
-    "🌍 Currency Market"
-)
+def login_screen():
 
 
-df=pd.DataFrame(
-    {
-        "Currency":list(rates.keys()),
-        "Rate":list(rates.values())
-    }
-)
-
-
-fig=go.Figure()
-
-
-fig.add_trace(
-    go.Bar(
-        x=df.Currency,
-        y=df.Rate
-    )
-)
-
-
-st.plotly_chart(
-    fig,
-    use_container_width=True
-)
-
-
-
-# ============================================================
-# AI DECISION
-# ============================================================
-
-
-st.subheader(
-    "🧠 SAI Brain"
-)
-
-
-if st.button(
-    "Generate Trade Signal"
-):
-
-    signal=ai_signal()
-
-
-    price=rates["UGX"]
-
-
-    st.success(
-        f"{signal} signal generated"
+    st.markdown(
+        """
+        <h1 style='text-align:center'>
+        🔐 SAI AI Forex Intelligence
+        </h1>
+        """,
+        unsafe_allow_html=True
     )
 
 
-    if signal!="HOLD":
+    login_tab, register_tab = st.tabs(
+        [
+            "Login",
+            "Create Account"
+        ]
+    )
 
-        execute_trade(
-            "UGX",
-            signal,
-            price
+
+
+    with login_tab:
+
+        username = st.text_input(
+            "Username"
+        )
+
+        password = st.text_input(
+            "Password",
+            type="password"
         )
 
 
+        if st.button(
+            "Login",
+            key="login"
+        ):
+
+
+            ok,role = authenticate_user(
+                username,
+                password
+            )
+
+
+            if ok:
+
+                st.session_state.authenticated=True
+
+                st.session_state.username=username
+
+                st.session_state.role=role
+
+                st.rerun()
+
+
+            else:
+
+                st.error(
+                    "Invalid username or password"
+                )
+
+
+
+    with register_tab:
+
+
+        username = st.text_input(
+            "New username"
+        )
+
+        password = st.text_input(
+            "New password",
+            type="password"
+        )
+
+        email = st.text_input(
+            "Email"
+        )
+
+
+        if st.button(
+            "Register",
+            key="register"
+        ):
+
+
+            if create_user(
+                username,
+                password,
+                email
+            ):
+
+                st.success(
+                    "Account created. Login now."
+                )
+
+            else:
+
+                st.error(
+                    "Username already exists"
+                )
+
+
+
+if not st.session_state.authenticated:
+
+    login_screen()
+
+    st.stop()
+
+
+
 # ============================================================
-# HISTORY
+# CURRENT USER HELPER
 # ============================================================
 
+def current_user():
 
-st.subheader(
-    "📜 Trading History"
-)
-
-
-conn=connect(
-    TRADE_DB
-)
+    return st.session_state.username
 
 
-history=pd.read_sql(
-    """
-    SELECT *
-    FROM trades
-    WHERE username=?
-    ORDER BY id DESC
-    """,
-    conn,
-    params=[
-        st.session_state.username
-    ]
-)
 
-
-conn.close()
-
-
-st.dataframe(
-    history,
-    use_container_width=True
-)
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-
-st.caption(
-    "SAI AI Trading System | Simulation Engine | Cloud Ready"
+logger.info(
+    f"User logged in: {current_user()}"
 )
