@@ -1,3 +1,11 @@
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def home():
+    return {"status": "SAI is running"}
+
 from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
