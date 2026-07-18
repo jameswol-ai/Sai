@@ -1,30 +1,25 @@
 # ============================================================
 # SAI AI Forex Bot v4.0
-# Unified Cloud Stable Edition
-# Part 1: Core System + Database + Authentication
+# Single File Streamlit Cloud Edition
 # ============================================================
 
 import streamlit as st
 import sqlite3
 import hashlib
+import random
+import time
 import os
 import logging
-import threading
-import queue
-import time
-import random
-import json
-
-from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 
 
 # ============================================================
-# PAGE CONFIGURATION
+# STREAMLIT CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -34,15 +29,10 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# PATHS
-# ============================================================
-
 BASE_DIR = Path(__file__).parent
 
 USER_DB = BASE_DIR / "sai_users.db"
 TRADE_DB = BASE_DIR / "sai_trading.db"
-MEMORY_FILE = BASE_DIR / "sai_memory.json"
 
 
 # ============================================================
@@ -51,78 +41,58 @@ MEMORY_FILE = BASE_DIR / "sai_memory.json"
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s %(levelname)s %(message)s"
 )
 
 logger = logging.getLogger("SAI")
 
 
 # ============================================================
-# PASSWORD SECURITY
+# DATABASE CORE
 # ============================================================
 
-def hash_password(password: str) -> str:
+def db(path):
+    return sqlite3.connect(path)
+
+
+
+def password_hash(password):
+
     return hashlib.sha256(
         password.encode()
     ).hexdigest()
 
 
 
-# ============================================================
-# DATABASE ENGINE
-# ============================================================
+def initialize_database():
 
-def db_connect(path):
+    conn = db(USER_DB)
 
-    conn = sqlite3.connect(
-        path,
-        check_same_thread=False
-    )
-
-    return conn
-
-
-
-def init_database():
-
-    # -------------------------
-    # USER DATABASE
-    # -------------------------
-
-    conn = db_connect(USER_DB)
-
-    conn.executescript("""
-
+    conn.execute("""
     CREATE TABLE IF NOT EXISTS users(
-
         username TEXT PRIMARY KEY,
-        password_hash TEXT NOT NULL,
-        role TEXT DEFAULT 'user',
-        email TEXT DEFAULT ''
-
-    );
-
-
+        password TEXT,
+        role TEXT
+    )
     """)
 
 
-    existing = conn.execute(
+    exists = conn.execute(
         "SELECT COUNT(*) FROM users"
     ).fetchone()[0]
 
 
-    if existing == 0:
+    if exists == 0:
 
         conn.execute(
             """
             INSERT INTO users
-            VALUES(?,?,?,?)
+            VALUES(?,?,?)
             """,
             (
                 "admin",
-                hash_password("admin123"),
-                "admin",
-                "admin@sai.ai"
+                password_hash("admin123"),
+                "admin"
             )
         )
 
@@ -132,11 +102,7 @@ def init_database():
 
 
 
-    # -------------------------
-    # TRADING DATABASE
-    # -------------------------
-
-    conn = db_connect(TRADE_DB)
+    conn = db(TRADE_DB)
 
 
     conn.executescript("""
@@ -147,7 +113,7 @@ def init_database():
 
         username TEXT,
 
-        timestamp TEXT,
+        time TEXT,
 
         symbol TEXT,
 
@@ -155,52 +121,16 @@ def init_database():
 
         price REAL,
 
-        units REAL,
-
         pnl REAL
 
     );
 
 
-    CREATE TABLE IF NOT EXISTS accounts(
+    CREATE TABLE IF NOT EXISTS balance(
 
         username TEXT PRIMARY KEY,
 
-        balance REAL DEFAULT 10000,
-
-        equity REAL DEFAULT 10000
-
-    );
-
-
-    CREATE TABLE IF NOT EXISTS positions(
-
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-        username TEXT,
-
-        symbol TEXT,
-
-        direction TEXT,
-
-        entry REAL,
-
-        units REAL,
-
-        status TEXT
-
-    );
-
-
-    CREATE TABLE IF NOT EXISTS bot_logs(
-
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-        username TEXT,
-
-        timestamp TEXT,
-
-        message TEXT
+        amount REAL
 
     );
 
@@ -213,32 +143,27 @@ def init_database():
 
 
 
-init_database()
+initialize_database()
 
 
 
 # ============================================================
-# USER MANAGEMENT
+# USER SYSTEM
 # ============================================================
 
-def authenticate_user(
-        username:str,
-        password:str
-):
+def authenticate(username,password):
 
-    conn = db_connect(USER_DB)
+    conn=db(USER_DB)
 
-
-    result = conn.execute(
+    result=conn.execute(
         """
         SELECT role
         FROM users
-        WHERE username=?
-        AND password_hash=?
+        WHERE username=? AND password=?
         """,
         (
             username,
-            hash_password(password)
+            password_hash(password)
         )
     ).fetchone()
 
@@ -248,37 +173,30 @@ def authenticate_user(
 
     if result:
 
-        return True, result[0]
+        return True,result[0]
 
 
-    return False, None
+    return False,None
 
 
 
-
-def create_user(
-        username,
-        password,
-        email=""
-):
+def create_user(username,password):
 
     try:
 
-        conn = db_connect(USER_DB)
+        conn=db(USER_DB)
 
         conn.execute(
             """
             INSERT INTO users
-            VALUES(?,?,?,?)
+            VALUES(?,?,?)
             """,
             (
                 username,
-                hash_password(password),
-                "user",
-                email
+                password_hash(password),
+                "user"
             )
         )
-
 
         conn.commit()
         conn.close()
@@ -286,34 +204,33 @@ def create_user(
         return True
 
 
-    except sqlite3.IntegrityError:
+    except Exception:
 
         return False
 
 
 
-
 def get_users():
 
-    conn = db_connect(USER_DB)
+    conn=db(USER_DB)
 
-    data = conn.execute(
+    users=pd.read_sql(
         """
-        SELECT username,role,email
+        SELECT username,role
         FROM users
-        """
-    ).fetchall()
+        """,
+        conn
+    )
 
     conn.close()
 
-    return data
-
+    return users
 
 
 
 def delete_user(username):
 
-    conn = db_connect(USER_DB)
+    conn=db(USER_DB)
 
     conn.execute(
         """
@@ -329,36 +246,30 @@ def delete_user(username):
 
 
 # ============================================================
-# SESSION MEMORY
+# SESSION STATE
 # ============================================================
 
-SESSION_DEFAULTS = {
+defaults={
 
-    "authenticated":False,
+    "logged":False,
 
-    "username":None,
+    "username":"",
 
-    "role":None,
+    "role":"",
 
     "bot_running":False,
 
-    "auto_trade":False,
+    "balance":10000.0,
 
-    "risk_level":5,
+    "trades":[],
 
-    "balance":10000,
-
-    "trade_queue":queue.Queue(),
-
-    "logs":[],
-
-    "market_history":[]
+    "signals":[]
 
 }
 
 
 
-for key,value in SESSION_DEFAULTS.items():
+for key,value in defaults.items():
 
     if key not in st.session_state:
 
@@ -367,51 +278,41 @@ for key,value in SESSION_DEFAULTS.items():
 
 
 # ============================================================
-# LOGIN / REGISTER UI
+# LOGIN UI
 # ============================================================
 
-
-def login_screen():
-
-
-    st.markdown(
-        """
-        <h1 style='text-align:center'>
-        🔐 SAI AI Forex Intelligence
-        </h1>
-        """,
-        unsafe_allow_html=True
-    )
+if not st.session_state.logged:
 
 
-    login_tab, register_tab = st.tabs(
+    st.title("🔐 SAI AI Forex Bot Login")
+
+
+    login_tab,register_tab=st.tabs(
         [
             "Login",
-            "Create Account"
+            "Register"
         ]
     )
 
 
-
     with login_tab:
 
-        username = st.text_input(
+
+        username=st.text_input(
             "Username"
         )
 
-        password = st.text_input(
+
+        password=st.text_input(
             "Password",
             type="password"
         )
 
 
-        if st.button(
-            "Login",
-            key="login"
-        ):
+        if st.button("Login"):
 
 
-            ok,role = authenticate_user(
+            ok,role=authenticate(
                 username,
                 password
             )
@@ -419,7 +320,7 @@ def login_screen():
 
             if ok:
 
-                st.session_state.authenticated=True
+                st.session_state.logged=True
 
                 st.session_state.username=username
 
@@ -431,7 +332,7 @@ def login_screen():
             else:
 
                 st.error(
-                    "Invalid username or password"
+                    "Invalid login"
                 )
 
 
@@ -439,34 +340,27 @@ def login_screen():
     with register_tab:
 
 
-        username = st.text_input(
+        new_user=st.text_input(
             "New username"
         )
 
-        password = st.text_input(
+
+        new_password=st.text_input(
             "New password",
             type="password"
         )
 
-        email = st.text_input(
-            "Email"
-        )
 
-
-        if st.button(
-            "Register",
-            key="register"
-        ):
+        if st.button("Create Account"):
 
 
             if create_user(
-                username,
-                password,
-                email
+                new_user,
+                new_password
             ):
 
                 st.success(
-                    "Account created. Login now."
+                    "Account created"
                 )
 
             else:
@@ -476,25 +370,4 @@ def login_screen():
                 )
 
 
-
-if not st.session_state.authenticated:
-
-    login_screen()
-
     st.stop()
-
-
-
-# ============================================================
-# CURRENT USER HELPER
-# ============================================================
-
-def current_user():
-
-    return st.session_state.username
-
-
-
-logger.info(
-    f"User logged in: {current_user()}"
-)
